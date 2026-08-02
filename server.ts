@@ -40,56 +40,124 @@ app.post("/api/fetch-url", async (req, res) => {
       return res.status(400).json({ error: "Please provide a valid URL string." });
     }
 
+    let rawUrl = url.trim();
+    if (!rawUrl.startsWith("http://") && !rawUrl.startsWith("https://")) {
+      rawUrl = `https://${rawUrl}`;
+    }
+
     let parsedUrl: URL;
     try {
-      parsedUrl = new URL(url.trim().startsWith("http") ? url.trim() : `https://${url.trim()}`);
+      parsedUrl = new URL(rawUrl);
     } catch {
       return res.status(400).json({ error: "Invalid URL format. Please include http:// or https://" });
     }
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 15000); // 15 second timeout
+    let extractedText = "";
+    let pageTitle = parsedUrl.hostname.replace("www.", "") + parsedUrl.pathname;
 
-    const response = await fetch(parsedUrl.toString(), {
-      signal: controller.signal,
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,text/plain;q=0.8,*/*;q=0.7",
-      },
-    });
-
-    clearTimeout(timeout);
-
-    if (!response.ok) {
-      return res.status(400).json({ error: `Failed to fetch URL. Server responded with status ${response.status} (${response.statusText}).` });
+    // Special handler for Wikipedia articles (uses Wikipedia's official free REST API)
+    if (parsedUrl.hostname.includes("wikipedia.org") && parsedUrl.pathname.includes("/wiki/")) {
+      const articleTitle = decodeURIComponent(parsedUrl.pathname.split("/wiki/")[1] || "");
+      if (articleTitle) {
+        try {
+          const wikiApiUrl = `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(articleTitle)}`;
+          const wikiRes = await fetch(wikiApiUrl, {
+            headers: { "User-Agent": "ExamEase-AI-App/1.0 (educational-assessment-tool)" },
+          });
+          if (wikiRes.ok) {
+            const wikiData = await wikiRes.json();
+            pageTitle = wikiData.title || articleTitle;
+            extractedText = wikiData.extract || "";
+            
+            // Also attempt to get full text extract if intro extract is short
+            if (extractedText.length < 500) {
+              const wikiFullUrl = `https://en.wikipedia.org/w/api.php?action=query&prop=extracts&explaintext=true&titles=${encodeURIComponent(articleTitle)}&format=json&origin=*`;
+              const fullRes = await fetch(wikiFullUrl);
+              if (fullRes.ok) {
+                const fullData = await fullRes.json();
+                const pages = fullData.query?.pages || {};
+                const firstKey = Object.keys(pages)[0];
+                if (firstKey && pages[firstKey]?.extract) {
+                  extractedText = pages[firstKey].extract;
+                }
+              }
+            }
+          }
+        } catch (wikiErr) {
+          console.warn("Wikipedia API fallback failed, resuming standard fetch:", wikiErr);
+        }
+      }
     }
 
-    const contentType = response.headers.get("content-type") || "";
-    let extractedText = "";
-    let pageTitle = parsedUrl.hostname + parsedUrl.pathname;
+    // Standard URL Fetching (if not already handled by Wikipedia API)
+    if (!extractedText) {
+      let rawText = "";
+      let contentType = "";
 
-    if (contentType.includes("application/json")) {
-      const jsonData = await response.json();
-      extractedText = JSON.stringify(jsonData, null, 2);
-    } else {
-      const rawText = await response.text();
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 12000);
 
-      if (contentType.includes("html") || rawText.toLowerCase().includes("<html")) {
-        // Extract page title
+        const response = await fetch(parsedUrl.toString(), {
+          signal: controller.signal,
+          headers: {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,text/plain;q=0.8,*/*;q=0.7",
+            "Accept-Language": "en-US,en;q=0.9",
+          },
+        });
+
+        clearTimeout(timeout);
+
+        if (response.ok) {
+          contentType = response.headers.get("content-type") || "";
+          rawText = await response.text();
+        }
+      } catch (fetchErr) {
+        console.warn("Direct fetch failed, trying proxy fallback:", fetchErr);
+      }
+
+      // Proxy Fallback if direct fetch failed or was blocked
+      if (!rawText) {
+        try {
+          const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(parsedUrl.toString())}`;
+          const proxyRes = await fetch(proxyUrl);
+          if (proxyRes.ok) {
+            rawText = await proxyRes.text();
+            contentType = proxyRes.headers.get("content-type") || "text/html";
+          }
+        } catch (proxyErr) {
+          console.warn("Proxy fetch failed:", proxyErr);
+        }
+      }
+
+      if (!rawText) {
+        return res.status(400).json({ error: "Unable to reach or read content from the provided URL. The site may be offline or blocking external requests." });
+      }
+
+      if (contentType.includes("application/json") || (rawText.trim().startsWith("{") && rawText.trim().endsWith("}"))) {
+        try {
+          const jsonData = JSON.parse(rawText);
+          extractedText = JSON.stringify(jsonData, null, 2);
+        } catch {
+          extractedText = rawText;
+        }
+      } else {
+        // Extract page title from HTML
         const titleMatch = rawText.match(/<title[^>]*>([^<]+)<\/title>/i);
         if (titleMatch && titleMatch[1]) {
-          pageTitle = titleMatch[1].trim();
+          pageTitle = titleMatch[1].replace(/[\r\n\t]+/g, " ").trim();
         }
 
-        // Clean HTML: Strip script, style, nav, footer, header tags
+        // Clean HTML: Strip scripts, styles, headers, footers, navs
         let cleanHtml = rawText
           .replace(/<script\b[^<]*>([\s\S]*?)<\/script>/gi, "")
           .replace(/<style\b[^<]*>([\s\S]*?)<\/style>/gi, "")
           .replace(/<noscript\b[^<]*>([\s\S]*?)<\/noscript>/gi, "")
           .replace(/<header\b[^<]*>([\s\S]*?)<\/header>/gi, "")
-          .replace(/<footer\b[^<]*>([\s\S]*?)<\/footer>/gi, "");
+          .replace(/<footer\b[^<]*>([\s\S]*?)<\/footer>/gi, "")
+          .replace(/<nav\b[^<]*>([\s\S]*?)<\/nav>/gi, "");
 
-        // Strip remaining HTML tags
         extractedText = cleanHtml
           .replace(/<[^>]+>/g, " ")
           .replace(/&nbsp;/gi, " ")
@@ -100,17 +168,15 @@ app.post("/api/fetch-url", async (req, res) => {
           .replace(/&#39;/gi, "'")
           .replace(/\s+/g, " ")
           .trim();
-      } else {
-        extractedText = rawText.trim();
       }
     }
 
     if (!extractedText || extractedText.length < 20) {
-      return res.status(400).json({ error: "Could not extract readable text from the provided URL. Ensure the link points to public text or web page content." });
+      return res.status(400).json({ error: "Could not extract sufficient text content from the provided link." });
     }
 
     const sanitizedTitle = pageTitle
-      .replace(/[^a-zA-Z0-9\s\-_.]/g, "")
+      .replace(/[^\w\s\-_.:]/gi, "")
       .trim() || "Web Import";
 
     const wordCount = extractedText.split(/\s+/).filter(Boolean).length;
@@ -127,9 +193,6 @@ app.post("/api/fetch-url", async (req, res) => {
     });
   } catch (err: any) {
     console.error("URL fetch error:", err);
-    if (err.name === "AbortError") {
-      return res.status(504).json({ error: "Request timed out while fetching the URL (15 second limit)." });
-    }
     return res.status(500).json({ error: err.message || "Failed to import content from the URL." });
   }
 });

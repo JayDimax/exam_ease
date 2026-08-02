@@ -177,40 +177,94 @@ export const DocumentUploadView: React.FC = () => {
     }
 
     setIsFetchingUrl(true);
+    let extractedText = '';
+    let docName = 'Public Web Import';
+    let finalSourceUrl = urlToFetch;
+
     try {
+      // 1. Try server-side endpoint first
       const response = await fetch('/api/fetch-url', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url: urlToFetch }),
       });
 
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || 'Failed to fetch content from URL');
+      const responseText = await response.text();
+      let data: any = null;
+      try {
+        data = JSON.parse(responseText);
+      } catch {
+        console.warn("Server returned non-JSON response:", responseText.slice(0, 100));
       }
+
+      if (response.ok && data && data.extractedText) {
+        extractedText = data.extractedText;
+        docName = data.name || docName;
+        finalSourceUrl = data.sourceUrl || finalSourceUrl;
+      } else if (data && data.error) {
+        throw new Error(data.error);
+      }
+    } catch (serverErr: any) {
+      console.warn("Backend fetch endpoint error, trying client-side fallback:", serverErr);
+    }
+
+    // 2. Client-side direct fallback for Wikipedia URLs if server fetch didn't return text
+    if (!extractedText && (urlToFetch.includes('wikipedia.org/wiki/') || urlToFetch.includes('wikipedia.org'))) {
+      try {
+        const parts = urlToFetch.split('/wiki/');
+        const articleSlug = parts[1] ? parts[1].split('#')[0] : '';
+        if (articleSlug) {
+          const wikiRes = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${articleSlug}`);
+          if (wikiRes.ok) {
+            const wikiData = await wikiRes.json();
+            extractedText = wikiData.extract || '';
+            docName = wikiData.title || articleSlug;
+
+            // Fetch full extract if available
+            try {
+              const fullRes = await fetch(`https://en.wikipedia.org/w/api.php?action=query&prop=extracts&explaintext=true&titles=${articleSlug}&format=json&origin=*`);
+              if (fullRes.ok) {
+                const fullData = await fullRes.json();
+                const pages = fullData.query?.pages || {};
+                const firstKey = Object.keys(pages)[0];
+                if (firstKey && pages[firstKey]?.extract) {
+                  extractedText = pages[firstKey].extract;
+                }
+              }
+            } catch {
+              // keep summary extract
+            }
+          }
+        }
+      } catch (clientWikiErr) {
+        console.error("Client Wikipedia fallback failed:", clientWikiErr);
+      }
+    }
+
+    // 3. Finalize document creation
+    if (extractedText && extractedText.trim().length > 20) {
+      const { words, chars } = calculateWordCount(extractedText);
 
       const newDoc: DocumentMetadata = {
         id: 'doc_url_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
-        name: data.name || 'Public Web Import',
-        size: data.size || data.extractedText.length * 2,
+        name: docName,
+        size: chars * 2,
         type: 'URL',
         uploadDate: new Date().toISOString(),
-        extractedText: data.extractedText,
-        characterCount: data.characterCount,
-        wordCount: data.wordCount,
-        sourceUrl: data.sourceUrl || urlToFetch,
+        extractedText,
+        characterCount: chars,
+        wordCount: words,
+        sourceUrl: finalSourceUrl,
       };
 
       addDocument(newDoc);
       setPublicUrl('');
-      showToast(`Successfully imported web page content (${data.wordCount.toLocaleString()} words).`);
-    } catch (err: any) {
-      console.error('URL import error:', err);
-      showToast(err.message || 'Failed to fetch URL', 'error');
-    } finally {
-      setIsFetchingUrl(false);
+      showToast(`Successfully imported content (${words.toLocaleString()} words).`);
+    } else {
+      showToast('Could not fetch text content from URL. Ensure the link points to a public article or web page.', 'error');
     }
+
+    setIsFetchingUrl(false);
   };
 
   const handleAddSample = (sample: typeof SAMPLE_DOCS[0]) => {
