@@ -15,6 +15,7 @@ import { TemplatesView } from './components/templates/TemplatesView';
 import { HistoryView } from './components/history/HistoryView';
 import { SettingsView } from './components/settings/SettingsView';
 import { StudentTakeExam } from './components/exam/StudentTakeExam';
+import { SupportView } from './components/support/SupportView';
 
 export default function App() {
   const { activeTab } = useAppStore();
@@ -44,6 +45,8 @@ export default function App() {
         return <SettingsView />;
       case 'take-exam':
         return <StudentTakeExam />;
+      case 'support':
+        return <SupportView />;
       default:
         return <DashboardView />;
     }

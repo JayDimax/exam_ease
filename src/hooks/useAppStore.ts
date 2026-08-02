@@ -25,7 +25,8 @@ export type ActiveTab =
   | 'templates'
   | 'history'
   | 'settings'
-  | 'take-exam';
+  | 'take-exam'
+  | 'support';
 
 interface AppStore {
   // Navigation

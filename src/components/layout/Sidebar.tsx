@@ -11,6 +11,7 @@ import {
   GraduationCap,
   Sparkles,
   FileSpreadsheet,
+  Heart,
 } from 'lucide-react';
 import { useAppStore, ActiveTab } from '../../hooks/useAppStore';
 
@@ -27,6 +28,7 @@ export const Sidebar: React.FC = () => {
     { id: 'templates', label: 'Exam Templates', icon: <BookmarkCheck className="w-5 h-5" /> },
     { id: 'history', label: 'Activity & History', icon: <History className="w-5 h-5" /> },
     { id: 'settings', label: 'Settings & Branding', icon: <Settings className="w-5 h-5" /> },
+    { id: 'support', label: 'Support the Project', icon: <Heart className="w-5 h-5 text-rose-400" /> },
   ];
 
   return (
