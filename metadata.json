@@ -1,0 +1,6 @@
+{
+  "name": "ExamEase",
+  "description": "AI-powered exam generation and assessment platform supporting document uploads, public link imports, and student test taking.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
