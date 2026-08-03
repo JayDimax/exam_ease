@@ -21,6 +21,7 @@ import {
   DifficultyLevel,
   GeneratedExam,
 } from '../../types';
+import { enforceQuestionDistribution } from '../../services/questionModalities';
 
 const ALL_QUESTION_TYPES: { id: QuestionType; label: string; defaultPoints: number }[] = [
   { id: 'multiple-choice', label: 'Multiple Choice', defaultPoints: 1 },
@@ -77,8 +78,8 @@ export const ExamGeneratorView: React.FC = () => {
     bloomTaxonomy: ['Remember', 'Understand', 'Apply', 'Analyze'],
     totalQuestions: 15,
     questionDistribution: {
-      'multiple-choice': 10,
-      'true-false': 5,
+      'multiple-choice': 0,
+      'true-false': 0,
       'identification': 0,
       'enumeration': 0,
       'matching': 0,
@@ -114,6 +115,15 @@ export const ExamGeneratorView: React.FC = () => {
         ...prev.questionDistribution,
         [type]: cleanCount,
       },
+    }));
+  };
+
+  const setAllModalityCounts = (count: number) => {
+    setConfig((prev) => ({
+      ...prev,
+      questionDistribution: Object.fromEntries(
+        ALL_QUESTION_TYPES.map(({ id }) => [id, count]),
+      ) as Record<QuestionType, number>,
     }));
   };
 
@@ -265,6 +275,10 @@ export const ExamGeneratorView: React.FC = () => {
         }
       }
 
+      // The visible distribution is authoritative. Normalize AI aliases, remove
+      // extra modalities, and fill any missing type before saving the exam.
+      questions = enforceQuestionDistribution(questions, config, activeDocument.extractedText);
+
       const newExam: GeneratedExam = {
         id: 'exam_' + Date.now(),
         documentId: activeDocument.id,
@@ -414,14 +428,30 @@ export const ExamGeneratorView: React.FC = () => {
 
           {/* Question Distribution Matrix */}
           <div className="p-5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl shadow-sm space-y-4">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-3">
               <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
                 <Sliders className="w-4 h-4 text-purple-600" />
                 <span>Question Modality Distribution</span>
               </h3>
-              <span className="px-3 py-1 bg-purple-50 dark:bg-purple-900/40 text-purple-600 dark:text-purple-300 font-extrabold text-xs rounded-lg">
-                Total: {config.totalQuestions} Questions
-              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setAllModalityCounts(0)}
+                  className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[10px] font-bold text-slate-600 transition hover:bg-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-200"
+                >
+                  Clear all
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAllModalityCounts(1)}
+                  className="rounded-lg border border-purple-200 bg-purple-50 px-2.5 py-1 text-[10px] font-bold text-purple-700 transition hover:bg-purple-100 dark:border-purple-700 dark:bg-purple-900/40 dark:text-purple-300"
+                >
+                  Test all modalities
+                </button>
+                <span className="px-3 py-1 bg-purple-50 dark:bg-purple-900/40 text-purple-600 dark:text-purple-300 font-extrabold text-xs rounded-lg">
+                  Total: {config.totalQuestions} Questions
+                </span>
+              </div>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
