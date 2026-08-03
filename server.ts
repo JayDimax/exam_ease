@@ -249,22 +249,32 @@ function analyzeDocumentFallback(text: string, title: string) {
 
 function generateExamFallback(text: string, config: any) {
   const sentences = text.split(/[.!?]+/).map(s => s.trim()).filter(s => s.length > 20);
-  const total = Math.min(config.totalQuestions || 10, Math.max(5, sentences.length));
   const questions: any[] = [];
-  const types = ["multiple-choice", "identification", "true-false", "fill-blank", "essay"];
+  const defaultDistribution = { "multiple-choice": config.totalQuestions || 10 };
+  const distribution = config.questionDistribution || defaultDistribution;
+  const types = Object.entries(distribution)
+    .flatMap(([type, count]) => Array(Math.max(0, Number(count) || 0)).fill(type));
 
-  for (let i = 0; i < total; i++) {
+  for (let i = 0; i < types.length; i++) {
     const sentence = sentences[i % sentences.length] || `Core learning concept ${i + 1}`;
     const words = sentence.split(/\s+/).filter(w => w.length > 4);
     const targetWord = words[Math.floor(words.length / 2)] || "concept";
-    const qType = types[i % types.length];
+    const qType = types[i];
+    const base = {
+      id: `q_fb_${i + 1}`,
+      type: qType,
+      explanation: `This answer is grounded in the source statement: "${sentence}"`,
+      difficulty: config.difficulty === "Mixed" ? (i % 3 === 0 ? "Hard" : i % 2 === 0 ? "Medium" : "Easy") : config.difficulty || "Medium",
+      bloomLevel: config.bloomTaxonomy?.[i % config.bloomTaxonomy.length] || "Understand",
+      sourceSection: sentence,
+      confidenceScore: 85,
+    };
 
     if (qType === "multiple-choice") {
       const distractors = ["Alternative Term A", "Alternative Term B", "Incorrect Option C"];
       const options = [targetWord, ...distractors].sort(() => Math.random() - 0.5);
       questions.push({
-        id: `q_fb_${i + 1}`,
-        type: "multiple-choice",
+        ...base,
         question: `According to the source text, which key term fills the blank: "${sentence.replace(targetWord, "_____")}"?`,
         options,
         correctAnswer: targetWord,
@@ -279,8 +289,7 @@ function generateExamFallback(text: string, config: any) {
       });
     } else if (qType === "true-false") {
       questions.push({
-        id: `q_fb_${i + 1}`,
-        type: "true-false",
+        ...base,
         question: `True or False: ${sentence}`,
         options: ["True", "False"],
         correctAnswer: "True",
@@ -295,8 +304,7 @@ function generateExamFallback(text: string, config: any) {
       });
     } else if (qType === "identification") {
       questions.push({
-        id: `q_fb_${i + 1}`,
-        type: "identification",
+        ...base,
         question: `Identify the term or concept being described: "${sentence.replace(targetWord, "[...]")}"`,
         correctAnswer: targetWord,
         explanation: `The term "${targetWord}" completes the definition in source text.`,
@@ -307,11 +315,75 @@ function generateExamFallback(text: string, config: any) {
         confidenceScore: 85,
         points: 2
       });
+    } else if (qType === "enumeration") {
+      const answers = words.slice(0, Math.min(3, words.length));
+      questions.push({
+        ...base,
+        question: `Enumerate ${answers.length} key terms found in this source statement: "${sentence}"`,
+        options: [],
+        correctAnswer: answers,
+        estimatedAnswerTimeMinutes: 3,
+        points: 2
+      });
+    } else if (qType === "matching") {
+      const pairs = words.slice(0, Math.min(3, words.length)).map((word, index) => ({
+        left: word,
+        right: `Key term ${index + 1} from the cited source statement`,
+      }));
+      questions.push({
+        ...base,
+        question: "Match each source term with its corresponding description.",
+        options: [],
+        matchingPairs: pairs,
+        correctAnswer: pairs.map(pair => `${pair.left} — ${pair.right}`),
+        estimatedAnswerTimeMinutes: 3,
+        points: 2
+      });
+    } else if (qType === "fill-blank") {
+      questions.push({
+        ...base,
+        question: `Fill in the blank: ${sentence.replace(targetWord, "_____")}`,
+        options: [],
+        correctAnswer: targetWord,
+        acceptableVariations: [targetWord],
+        estimatedAnswerTimeMinutes: 1,
+        points: 1
+      });
+    } else if (qType === "short-answer") {
+      questions.push({
+        ...base,
+        question: `Briefly explain the following idea from the source: "${sentence}"`,
+        options: [],
+        correctAnswer: sentence,
+        estimatedAnswerTimeMinutes: 3,
+        points: 3,
+        rubric: "Award full credit for a concise answer containing the key idea stated in the cited source."
+      });
+    } else if (qType === "case-analysis") {
+      questions.push({
+        ...base,
+        question: `Analyze a situation in which this source concept applies: "${sentence}"`,
+        options: [],
+        correctAnswer: sentence,
+        estimatedAnswerTimeMinutes: 8,
+        points: 10,
+        rubric: "Evaluate correct use of the source concept, reasoning, and a supported conclusion."
+      });
+    } else if (qType === "problem-solving") {
+      questions.push({
+        ...base,
+        question: `Using the source material, propose a solution based on this principle: "${sentence}"`,
+        options: [],
+        correctAnswer: sentence,
+        estimatedAnswerTimeMinutes: 5,
+        points: 5,
+        rubric: "Award credit for a valid process and conclusion grounded in the cited source principle."
+      });
     } else {
       questions.push({
-        id: `q_fb_${i + 1}`,
+        ...base,
         type: "essay",
-        question: `Explain the importance and context of the following statement: "${sentence}"`,
+        question: `Explain and evaluate the importance of the following statement: "${sentence}"`,
         correctAnswer: sentence,
         explanation: `Refer to the section in source material discussing: "${sentence}"`,
         difficulty: "Hard",
@@ -434,8 +506,13 @@ app.post("/api/ai/generate-exam", async (req, res) => {
   try {
     const ai = getAI();
 
-    const distributionPrompt = config.questionDistribution
-      ? JSON.stringify(config.questionDistribution)
+    const requestedDistribution = Object.fromEntries(
+      Object.entries(config.questionDistribution || {})
+        .map(([type, count]) => [type, Math.max(0, Number(count) || 0)])
+        .filter(([, count]) => Number(count) > 0)
+    );
+    const distributionPrompt = Object.keys(requestedDistribution).length
+      ? JSON.stringify(requestedDistribution)
       : `Mixed distribution totaling ${config.totalQuestions || 15} questions across Multiple Choice, Identification, True/False, Enumeration, Fill in the Blank, Essay, etc.`;
 
     const prompt = `You are a professional educational assessment author.
@@ -458,11 +535,12 @@ ${documentText.slice(0, 45000)}
 ${knowledgeMap ? `Knowledge Map Objectives: ${JSON.stringify(knowledgeMap.learningObjectives || [])}` : ""}
 
 RULES:
+0. The Target Distribution is an exact contract. Generate exactly the stated count for every type, no omitted types, no substitutions, and no extra questions. A zero or absent count means do not generate that type.
 1. Every Question must have:
    - id (string)
    - type (must be one of: "multiple-choice", "identification", "enumeration", "matching", "fill-blank", "true-false", "essay", "short-answer", "case-analysis", "problem-solving")
    - question (string)
-   - options (array of strings, exactly 4 for multiple-choice, empty for others unless matching/enumeration)
+   - options (array of strings, exactly 4 only for multiple-choice; ["True", "False"] only for true-false; empty for every other type)
    - correctAnswer (string or string array for enumeration/matching)
    - distractors (array of strings for multiple choice)
    - explanation (detailed explanation citing why answer is correct)
@@ -529,7 +607,19 @@ Return JSON with an array of questions under key "questions".`;
     });
 
     const parsedData = JSON.parse(response.text || '{"questions":[]}');
-    res.json(parsedData);
+    const aiQuestions = Array.isArray(parsedData.questions) ? parsedData.questions : [];
+    const fallbackQuestions = generateExamFallback(documentText, { ...config, questionDistribution: requestedDistribution }).questions;
+    const exactQuestions: any[] = [];
+
+    for (const [type, rawCount] of Object.entries(requestedDistribution)) {
+      const count = Number(rawCount) || 0;
+      const matchingAiQuestions = aiQuestions.filter((question: any) => question?.type === type).slice(0, count);
+      const missing = count - matchingAiQuestions.length;
+      const matchingFallbacks = fallbackQuestions.filter((question: any) => question.type === type).slice(0, missing);
+      exactQuestions.push(...matchingAiQuestions, ...matchingFallbacks);
+    }
+
+    res.json({ ...parsedData, questions: exactQuestions });
   } catch (error: any) {
     console.warn("AI Generate exam error/quota limit, using fallback generator:", error.message);
     const fallback = generateExamFallback(documentText, config || {});

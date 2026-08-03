@@ -363,6 +363,11 @@ interface QuestionCardProps {
 }
 
 const QuestionCard: React.FC<QuestionCardProps> = ({ question, index, isTeacher }) => {
+  const typeLabel = String(question.type || 'question')
+    .split('-')
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
+
   return (
     <div className="p-5 bg-slate-50 dark:bg-slate-700/40 border border-slate-200/80 dark:border-slate-700 rounded-2xl space-y-3">
       <div className="flex items-start justify-between gap-3">
@@ -372,9 +377,14 @@ const QuestionCard: React.FC<QuestionCardProps> = ({ question, index, isTeacher 
             {question.question}
           </p>
         </div>
-        <span className="px-2.5 py-0.5 text-[10px] font-bold rounded-lg bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-600 shrink-0">
-          {question.points} pt{question.points > 1 ? 's' : ''}
-        </span>
+        <div className="flex shrink-0 items-center gap-1.5">
+          <span className="px-2.5 py-0.5 text-[10px] font-bold rounded-lg bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
+            {typeLabel}
+          </span>
+          <span className="px-2.5 py-0.5 text-[10px] font-bold rounded-lg bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-600">
+            {question.points} pt{question.points > 1 ? 's' : ''}
+          </span>
+        </div>
       </div>
 
       {/* Options for Multiple Choice */}
@@ -401,6 +411,30 @@ const QuestionCard: React.FC<QuestionCardProps> = ({ question, index, isTeacher 
               </div>
             );
           })}
+        </div>
+      )}
+
+      {question.type === 'true-false' && (
+        <div className="flex gap-6 pl-6 text-xs font-semibold text-slate-700 dark:text-slate-300">
+          <span>○ True</span>
+          <span>○ False</span>
+        </div>
+      )}
+
+      {!isTeacher && ['identification', 'fill-blank', 'short-answer'].includes(question.type) && (
+        <div className="ml-6 h-8 border-b border-slate-400 dark:border-slate-500" />
+      )}
+
+      {!isTeacher && ['enumeration', 'essay', 'case-analysis', 'problem-solving'].includes(question.type) && (
+        <div className="ml-6 space-y-5 pt-2">
+          {[1, 2, 3].map((line) => <div key={line} className="border-b border-slate-300 dark:border-slate-600" />)}
+        </div>
+      )}
+
+      {question.type === 'matching' && question.matchingPairs?.length > 0 && (
+        <div className="grid grid-cols-2 gap-4 pl-6 text-xs text-slate-700 dark:text-slate-300">
+          <div className="space-y-2">{question.matchingPairs.map((pair: any, pairIndex: number) => <div key={pairIndex}>{pairIndex + 1}. {pair.left}</div>)}</div>
+          <div className="space-y-2">{question.matchingPairs.map((pair: any, pairIndex: number) => <div key={pairIndex}>{String.fromCharCode(65 + pairIndex)}. {pair.right}</div>)}</div>
         </div>
       )}
 
