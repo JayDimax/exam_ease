@@ -19,7 +19,6 @@ export const Sidebar: React.FC = () => {
   const { activeTab, setActiveTab, activeDocument, documents, exams } = useAppStore();
 
   const navItems: { id: ActiveTab; label: string; icon: React.ReactNode; badge?: number }[] = [
-    { id: 'welcome', label: 'Welcome & Info', icon: <GraduationCap className="w-5 h-5 text-blue-400" /> },
     { id: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard className="w-5 h-5" /> },
     { id: 'upload', label: 'Upload Materials', icon: <FilePlus className="w-5 h-5" />, badge: documents.length },
     { id: 'analysis', label: 'AI Knowledge Map', icon: <BrainCircuit className="w-5 h-5" /> },
