@@ -16,12 +16,15 @@ import { HistoryView } from './components/history/HistoryView';
 import { SettingsView } from './components/settings/SettingsView';
 import { StudentTakeExam } from './components/exam/StudentTakeExam';
 import { SupportView } from './components/support/SupportView';
+import { WelcomeView } from './components/welcome/WelcomeView';
 
 export default function App() {
   const { activeTab } = useAppStore();
 
   const renderCurrentTab = () => {
     switch (activeTab) {
+      case 'welcome':
+        return <WelcomeView />;
       case 'dashboard':
         return <DashboardView />;
       case 'upload':

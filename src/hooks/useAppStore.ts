@@ -14,6 +14,7 @@ import {
 import { StorageService } from '../services/storage';
 
 export type ActiveTab =
+  | 'welcome'
   | 'dashboard'
   | 'upload'
   | 'analysis'
@@ -88,7 +89,7 @@ interface AppStore {
 }
 
 export const useAppStore = create<AppStore>((set, get) => ({
-  activeTab: 'dashboard',
+  activeTab: 'welcome',
   setActiveTab: (tab) => set({ activeTab: tab }),
 
   // Documents
