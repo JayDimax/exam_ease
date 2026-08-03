@@ -21,10 +21,17 @@ import { WelcomeView } from './components/welcome/WelcomeView';
 export default function App() {
   const { activeTab } = useAppStore();
 
+  if (activeTab === 'welcome') {
+    return (
+      <>
+        <WelcomeView />
+        <Toast />
+      </>
+    );
+  }
+
   const renderCurrentTab = () => {
     switch (activeTab) {
-      case 'welcome':
-        return <WelcomeView />;
       case 'dashboard':
         return <DashboardView />;
       case 'upload':
