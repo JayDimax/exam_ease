@@ -40,6 +40,32 @@ function sourceParts(text: string) {
   return sentences.length ? sentences : ['The uploaded learning material contains the concept being assessed'];
 }
 
+function lectureBasedDistractors(text: string, correctAnswer: unknown, existing: unknown[] = []): string[] {
+  const answer = String(correctAnswer || '').trim().toLowerCase();
+  const sourceLower = text.toLowerCase();
+  const sourceTerms = text
+    .match(/[A-Za-z][A-Za-z-]{4,}(?:\s+[A-Za-z][A-Za-z-]{3,})?/g) || [];
+  const candidates = [...existing.map(String), ...sourceTerms]
+    .map((term) => term.trim().replace(/[.,;:!?]+$/, ''))
+    .filter((term) => {
+      const normalized = term.toLowerCase();
+      return normalized !== answer && !answer.includes(normalized) && !normalized.includes(answer) && sourceLower.includes(normalized);
+    });
+  const unique = [...new Map(candidates.map((term) => [term.toLowerCase(), term] as const)).values()];
+  return unique.slice(0, 3);
+}
+
+function groundMultipleChoice(question: Question, text: string): Question {
+  if (question.type !== 'multiple-choice') return question;
+  const distractors = lectureBasedDistractors(text, question.correctAnswer, question.distractors || question.options || []);
+  const correct = String(question.correctAnswer);
+  return {
+    ...question,
+    distractors,
+    options: [correct, ...distractors].sort(() => Math.random() - 0.5),
+  };
+}
+
 function makeFallback(type: QuestionType, index: number, text: string, config: ExamConfig): Question {
   const sentences = sourceParts(text);
   const sentence = sentences[index % sentences.length];
@@ -59,7 +85,7 @@ function makeFallback(type: QuestionType, index: number, text: string, config: E
 
   switch (type) {
     case 'multiple-choice': {
-      const distractors = ['Related concept A', 'Related concept B', 'Unrelated concept'];
+      const distractors = lectureBasedDistractors(text, answer);
       return { ...base, question: `Which term completes this source statement: "${sentence.replace(answer, '_____')}"?`, options: [answer, ...distractors], distractors, correctAnswer: answer };
     }
     case 'true-false':
@@ -110,5 +136,8 @@ export function enforceQuestionDistribution(
     }
   }
 
-  return result.map((question, index) => ({ ...question, id: question.id || `q_${Date.now()}_${index}` }));
+  return result.map((question, index) => groundMultipleChoice({
+    ...question,
+    id: question.id || `q_${Date.now()}_${index}`,
+  }, documentText));
 }

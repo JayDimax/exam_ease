@@ -271,7 +271,12 @@ function generateExamFallback(text: string, config: any) {
     };
 
     if (qType === "multiple-choice") {
-      const distractors = ["Alternative Term A", "Alternative Term B", "Incorrect Option C"];
+      const sourceTerms = text.match(/[A-Za-z][A-Za-z-]{4,}(?:\s+[A-Za-z][A-Za-z-]{3,})?/g) || [];
+      const distractors = [...new Map(
+        sourceTerms
+          .filter(term => term.toLowerCase() !== targetWord.toLowerCase())
+          .map(term => [term.toLowerCase(), term] as const)
+      ).values()].slice(0, 3);
       const options = [targetWord, ...distractors].sort(() => Math.random() - 0.5);
       questions.push({
         ...base,
@@ -542,7 +547,7 @@ RULES:
    - question (string)
    - options (array of strings, exactly 4 only for multiple-choice; ["True", "False"] only for true-false; empty for every other type)
    - correctAnswer (string or string array for enumeration/matching)
-   - distractors (array of strings for multiple choice)
+   - distractors (exactly 3 strings for multiple choice). Every distractor MUST be a real term, concept, person, process, or phrase found in the Learning Document Content. It must be plausible in the same subject area but incorrect for this specific question. Never use placeholders such as "Alternative A", "Incorrect option", "None of the above", invented terminology, or unrelated generic text.
    - explanation (detailed explanation citing why answer is correct)
    - difficulty ("Easy", "Medium", "Hard")
    - bloomLevel ("Remember", "Understand", "Apply", "Analyze", "Evaluate", "Create")
@@ -642,6 +647,8 @@ ${JSON.stringify(currentQuestion, null, 2)}
 
 User Instruction / Improvement Request:
 "${feedback || "Make this question more engaging, precise, and well-structured."}"
+
+For multiple-choice questions, every incorrect option must be a plausible term or concept that appears in the Source Document Reference Text. It must be incorrect only for the question being asked. Do not invent terminology or use generic placeholders.
 
 Source Document Reference Text:
 """

@@ -209,7 +209,13 @@ export const ExamGeneratorView: React.FC = () => {
           const qType = types[i % types.length];
 
           if (qType === 'multiple-choice') {
-            const distractors = ['Alternative Principle A', 'Alternative Principle B', 'Incorrect Concept C'];
+            const lectureTerms = activeDocument.extractedText
+              .match(/[A-Za-z][A-Za-z-]{4,}(?:\s+[A-Za-z][A-Za-z-]{3,})?/g) || [];
+            const distractors = [...new Map(
+              lectureTerms
+                .filter((term) => term.toLowerCase() !== targetWord.toLowerCase())
+                .map((term) => [term.toLowerCase(), term] as const),
+            ).values()].slice(0, 3);
             const options = [targetWord, ...distractors].sort(() => Math.random() - 0.5);
             questions.push({
               id: `q_${Date.now()}_${i + 1}`,
