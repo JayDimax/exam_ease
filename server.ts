@@ -520,9 +520,9 @@ app.post("/api/ai/generate-exam", async (req, res) => {
       ? JSON.stringify(requestedDistribution)
       : `Mixed distribution totaling ${config.totalQuestions || 15} questions across Multiple Choice, Identification, True/False, Enumeration, Fill in the Blank, Essay, etc.`;
 
-    const prompt = `You are a professional educational assessment author.
-Generate a comprehensive, rigorous examination based STRICTLY AND ONLY on the provided learning document content.
-DO NOT invent facts, definitions, or outside information. Every question must be directly verifiable from the source material.
+    const prompt = `You are an expert assessment specialist, instructional designer, psychometrician, university professor, and professional examination writer.
+Generate a classroom-ready examination based STRICTLY AND ONLY on the provided learning document content. Quality is more important than quantity.
+Do not invent, infer, or import facts, definitions, examples, terminology, or context from outside the document. Every question, answer, distractor, explanation, scenario, and rubric must be traceable to the source. If the source cannot support a valid item, do not fabricate one.
 
 Exam Settings:
 - Title: ${config.title || "Examination"}
@@ -541,6 +541,7 @@ ${knowledgeMap ? `Knowledge Map Objectives: ${JSON.stringify(knowledgeMap.learni
 
 RULES:
 0. The Target Distribution is an exact contract. Generate exactly the stated count for every type, no omitted types, no substitutions, and no extra questions. A zero or absent count means do not generate that type.
+0a. Before writing questions, silently build a knowledge map of the document: topics, subtopics, objectives, definitions, concepts, procedures, formulas, terminology, relationships, dates, names, examples, comparisons, tables, processes, rules, best practices, and exceptions. Distribute items broadly and proportionally across important material. Do not repeatedly test the same concept.
 1. Every Question must have:
    - id (string)
    - type (must be one of: "multiple-choice", "identification", "enumeration", "matching", "fill-blank", "true-false", "essay", "short-answer", "case-analysis", "problem-solving")
@@ -548,7 +549,7 @@ RULES:
    - options (array of strings, exactly 4 only for multiple-choice; ["True", "False"] only for true-false; empty for every other type)
    - correctAnswer (string or string array for enumeration/matching)
    - distractors (exactly 3 strings for multiple choice). Every distractor MUST be a real term, concept, person, process, or phrase found in the Learning Document Content. It must be plausible in the same subject area but incorrect for this specific question. Never use placeholders such as "Alternative A", "Incorrect option", "None of the above", invented terminology, or unrelated generic text.
-   - explanation (detailed explanation citing why answer is correct)
+   - explanation (a teaching-focused explanation of why the answer is correct and, when useful, why alternatives are incorrect; use only source-supported information)
    - difficulty ("Easy", "Medium", "Hard")
    - bloomLevel ("Remember", "Understand", "Apply", "Analyze", "Evaluate", "Create")
    - sourceSection (exact or paraphrased quote from the text source)
@@ -558,6 +559,18 @@ RULES:
    - rubric (string, required for Essay, Short Answer, Case Analysis, Problem Solving)
    - acceptableVariations (array of strings for Identification/Fill-blank)
    - matchingPairs (array of objects with { left: string, right: string } for matching type)
+
+ITEM-WRITING STANDARD:
+2. Write clear, concise, grammatically correct, unambiguous questions. Avoid tricks, double negatives, vague wording, unnecessary clues, opinion questions, and questions answerable through test-taking cues alone.
+3. Match cognitive demand to difficulty: Easy = recall/recognition/basic understanding; Medium = application/relationships/procedures; Hard = analysis/evaluation/interpretation/decision-making/problem solving. Match every item to one of the requested Bloom levels.
+4. Multiple choice: provide exactly four distinct options and exactly one unquestionably correct answer. Never use "all of the above", "none of the above", combined answers such as "A and B", or overlapping choices. Distractors must be credible, source-grounded, in the same conceptual category, grammatically parallel, and approximately equal in length. Prefer common misconceptions, similar terminology, related processes, or comparable people/dates/formulas found in the source. Vary the correct-answer position naturally across A-D, and do not make the key conspicuous by length, specificity, or wording.
+5. Identification: describe or define a concept meaningfully and include source-supported common alternative answers in acceptableVariations.
+6. Enumeration: use only explicit source lists, state the exact number requested, and provide the complete expected answer set.
+7. True/false: use precise, non-obvious statements and balance true and false keys across the set without a predictable pattern.
+8. Matching: all pairs must belong to one category; make pairings non-obvious and randomize the right-hand entries.
+9. Essay, case-analysis, and problem-solving: require explanation, comparison, application, analysis, evaluation, or synthesis grounded in the document. Provide a complete expected answer plus a concrete rubric with key points and score allocation. Scenarios must not require facts absent from the source.
+10. Internally validate every item before returning it: source support; one correct interpretation; credible same-category distractors; no duplicate or near-duplicate items or choices; correct grammar; appropriate difficulty and Bloom level; broad coverage; and no answer clues. Silently replace any item that fails.
+11. sourceSection must identify the most specific source heading, section, or passage available. confidenceScore must reflect actual source support; never use confidence to excuse unsupported content.
 
 Return JSON with an array of questions under key "questions".`;
 
@@ -639,7 +652,7 @@ app.post("/api/ai/regenerate-question", async (req, res) => {
   try {
     const ai = getAI();
 
-    const prompt = `You are an expert assessment generator.
+    const prompt = `You are an expert assessment specialist and professional examination writer.
 Regenerate or improve the following question based on user feedback and source document text.
 
 Current Question:
@@ -648,7 +661,15 @@ ${JSON.stringify(currentQuestion, null, 2)}
 User Instruction / Improvement Request:
 "${feedback || "Make this question more engaging, precise, and well-structured."}"
 
-For multiple-choice questions, every incorrect option must be a plausible term or concept that appears in the Source Document Reference Text. It must be incorrect only for the question being asked. Do not invent terminology or use generic placeholders.
+Use strictly and only the Source Document Reference Text. Do not invent or import any fact, scenario, example, answer, distractor, or explanation. Preserve the current question type unless the user explicitly requests a change.
+
+Write a clear, concise, grammatically correct, unambiguous item with one correct interpretation and cognitive demand appropriate to its difficulty and Bloom level. Avoid tricks, double negatives, vague wording, unnecessary clues, and duplicate choices.
+
+For multiple-choice questions, produce exactly four distinct, parallel, similarly sized choices with exactly one unquestionably correct answer. Every distractor must be a credible, same-category term or concept supported by the source but incorrect for this item. Never use placeholders, unrelated choices, "all of the above", "none of the above", or combined answers. Do not make the correct answer conspicuous.
+
+For enumeration, use only an explicit source list and specify the required answer count. For matching, keep all pairs in one category and randomize the right-hand entries. For essay, case-analysis, or problem-solving, include a source-grounded expected answer and a rubric containing key points and score allocation. Include a precise sourceSection and a teaching-focused explanation.
+
+Before returning the item, silently validate source support, uniqueness, grammar, difficulty, Bloom alignment, answer uniqueness, and distractor plausibility. Regenerate internally if any check fails.
 
 Source Document Reference Text:
 """
@@ -715,7 +736,7 @@ app.post("/api/ai/check-quality", async (req, res) => {
   try {
     const ai = getAI();
 
-    const prompt = `Perform a comprehensive quality check and coverage analysis for this examination set based on the source document.
+    const prompt = `Act as an expert assessment specialist and psychometric reviewer. Perform a strict, source-grounded quality and coverage audit of this examination set. Do not assume facts outside the source document.
 
 Questions Set:
 ${JSON.stringify(questions, null, 2)}
@@ -731,7 +752,9 @@ Evaluate:
 3. Duplicate questions or near-duplicate concepts detected
 4. Syllabus / Document Coverage Percentage (0-100%)
 5. Concrete Improvement Suggestions
-6. Grammar and Clarity issues if any`;
+6. Grammar and Clarity issues if any
+
+Also check each applicable item for: direct source traceability; exactly one correct interpretation; credible same-category and similarly sized distractors; absence of answer-position or wording clues; no "all/none of the above" or combined answers; difficulty accuracy; Bloom-level accuracy; balanced topic coverage; true/false key balance; explicit source lists for enumeration; homogeneous matching categories; and source-grounded expected answers and rubrics for constructed-response items. Penalize unsupported content, ambiguity, repetition, implausible distractors, and mislabeled cognitive demand.`;
 
     const response = await ai.models.generateContent({
       model: "gemini-3.6-flash",
