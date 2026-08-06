@@ -63,6 +63,8 @@ export interface ExamConfig {
   difficulty: DifficultyLevel;
   bloomTaxonomy: BloomLevel[];
   totalQuestions: number;
+  /** Modalities explicitly selected by the teacher for generation. */
+  selectedQuestionTypes?: QuestionType[];
   questionDistribution: Record<QuestionType, number>;
   timeLimitMinutes: number;
   passingScore: number;

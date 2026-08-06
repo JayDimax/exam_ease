@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   Sparkles,
   BookmarkCheck,
@@ -22,6 +22,11 @@ import {
   GeneratedExam,
 } from '../../types';
 import { enforceQuestionDistribution } from '../../services/questionModalities';
+import {
+  buildSelectedQuestionDistribution,
+  normalizeSelectedQuestionTypes,
+  selectedTypesFromDistribution,
+} from '../../services/questionSelection';
 
 const ALL_QUESTION_TYPES: { id: QuestionType; label: string; defaultPoints: number }[] = [
   { id: 'multiple-choice', label: 'Multiple Choice', defaultPoints: 1 },
@@ -77,8 +82,9 @@ export const ExamGeneratorView: React.FC = () => {
     difficulty: 'Medium',
     bloomTaxonomy: ['Remember', 'Understand', 'Apply', 'Analyze'],
     totalQuestions: 15,
+    selectedQuestionTypes: ['multiple-choice'],
     questionDistribution: {
-      'multiple-choice': 0,
+      'multiple-choice': 15,
       'true-false': 0,
       'identification': 0,
       'enumeration': 0,
@@ -101,30 +107,43 @@ export const ExamGeneratorView: React.FC = () => {
     watermarkText: '',
   });
 
-  // Calculate total questions dynamically
-  useEffect(() => {
-    const sum = (Object.values(config.questionDistribution) as number[]).reduce((a, b) => a + (Number(b) || 0), 0);
-    setConfig((prev) => ({ ...prev, totalQuestions: sum }));
-  }, [config.questionDistribution]);
+  const selectedQuestionTypes = normalizeSelectedQuestionTypes(
+    config.selectedQuestionTypes?.length
+      ? config.selectedQuestionTypes
+      : selectedTypesFromDistribution(config.questionDistribution),
+  );
 
-  const handleDistributionChange = (type: QuestionType, count: number) => {
-    const cleanCount = Math.max(0, count);
-    setConfig((prev) => ({
-      ...prev,
-      questionDistribution: {
-        ...prev.questionDistribution,
-        [type]: cleanCount,
-      },
-    }));
+  const setSelectedModalities = (selectedValue: QuestionType[]) => {
+    const selected = normalizeSelectedQuestionTypes(selectedValue);
+    setConfig((prev) => {
+      const totalQuestions = selected.length ? Math.max(selected.length, prev.totalQuestions || 1) : prev.totalQuestions;
+      return {
+        ...prev,
+        totalQuestions,
+        selectedQuestionTypes: selected,
+        questionDistribution: buildSelectedQuestionDistribution(selected, totalQuestions),
+      };
+    });
   };
 
-  const setAllModalityCounts = (count: number) => {
-    setConfig((prev) => ({
-      ...prev,
-      questionDistribution: Object.fromEntries(
-        ALL_QUESTION_TYPES.map(({ id }) => [id, count]),
-      ) as Record<QuestionType, number>,
-    }));
+  const toggleQuestionType = (type: QuestionType) => {
+    setSelectedModalities(
+      selectedQuestionTypes.includes(type)
+        ? selectedQuestionTypes.filter((selectedType) => selectedType !== type)
+        : [...selectedQuestionTypes, type],
+    );
+  };
+
+  const handleTotalQuestionsChange = (value: number) => {
+    setConfig((prev) => {
+      const selected = normalizeSelectedQuestionTypes(prev.selectedQuestionTypes);
+      const totalQuestions = selected.length ? Math.max(selected.length, Math.floor(value) || selected.length) : Math.max(1, Math.floor(value) || 1);
+      return {
+        ...prev,
+        totalQuestions,
+        questionDistribution: buildSelectedQuestionDistribution(selected, totalQuestions),
+      };
+    });
   };
 
   const toggleBloomLevel = (level: BloomLevel) => {
@@ -139,14 +158,21 @@ export const ExamGeneratorView: React.FC = () => {
 
   const handleApplyTemplate = (tpl: any) => {
     if (tpl.config) {
-      setConfig((prev) => ({
-        ...prev,
-        ...tpl.config,
-        questionDistribution: {
-          ...prev.questionDistribution,
-          ...(tpl.config.questionDistribution || {}),
-        },
-      }));
+      setConfig((prev) => {
+        const selected = normalizeSelectedQuestionTypes(tpl.config.selectedQuestionTypes);
+        const templateSelected = selected.length
+          ? selected
+          : selectedTypesFromDistribution(tpl.config.questionDistribution);
+        const distributionTotal = Object.values(tpl.config.questionDistribution || {}).reduce<number>((sum, count) => sum + (Number(count) || 0), 0);
+        const totalQuestions = Math.max(templateSelected.length, Number(tpl.config.totalQuestions) || distributionTotal || prev.totalQuestions);
+        return {
+          ...prev,
+          ...tpl.config,
+          totalQuestions,
+          selectedQuestionTypes: templateSelected,
+          questionDistribution: buildSelectedQuestionDistribution(templateSelected, totalQuestions),
+        };
+      });
       showToast(`Applied template: "${tpl.name}"`);
     }
   };
@@ -157,8 +183,13 @@ export const ExamGeneratorView: React.FC = () => {
       return;
     }
 
-    if (config.totalQuestions === 0) {
-      showToast('Please specify at least 1 question in the distribution.', 'error');
+    if (selectedQuestionTypes.length === 0) {
+      showToast('Please select at least one question modality.', 'error');
+      return;
+    }
+
+    if (config.totalQuestions < selectedQuestionTypes.length) {
+      showToast('The total question count must allow at least one question per selected modality.', 'error');
       return;
     }
 
