@@ -1,6 +1,5 @@
 import express from "express";
 import path from "path";
-import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
 import {
@@ -924,6 +923,7 @@ Also check each applicable item for: direct source traceability; exactly one cor
 // Start Express and Vite Middleware
 async function startServer() {
   if (process.env.NODE_ENV !== "production") {
+    const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
@@ -942,4 +942,10 @@ async function startServer() {
   });
 }
 
-startServer();
+// Vercel imports the Express instance as a serverless handler. Local and
+// traditional Node deployments still start the HTTP listener normally.
+if (!process.env.VERCEL) {
+  startServer();
+}
+
+export default app;
