@@ -3,6 +3,13 @@ import path from "path";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
+import {
+  extractExplicitLists,
+  findSupportingExplicitList,
+  getEnumerationAnswers,
+  normalizeEnumerationQuestion,
+  validateEnumerationQuestion,
+} from "./src/services/enumeration";
 
 dotenv.config();
 
@@ -254,6 +261,8 @@ function generateExamFallback(text: string, config: any) {
   const distribution = config.questionDistribution || defaultDistribution;
   const types = Object.entries(distribution)
     .flatMap(([type, count]) => Array(Math.max(0, Number(count) || 0)).fill(type));
+  const explicitLists = extractExplicitLists(text);
+  let enumerationListIndex = 0;
 
   for (let i = 0; i < types.length; i++) {
     const sentence = sentences[i % sentences.length] || `Core learning concept ${i + 1}`;
@@ -321,14 +330,19 @@ function generateExamFallback(text: string, config: any) {
         points: 2
       });
     } else if (qType === "enumeration") {
-      const answers = words.slice(0, Math.min(3, words.length));
+      const sourceList = explicitLists[enumerationListIndex++];
+      if (!sourceList) continue;
+      const answers = sourceList.items;
       questions.push({
         ...base,
-        question: `Enumerate ${answers.length} key terms found in this source statement: "${sentence}"`,
+        question: `Enumerate all ${answers.length} items in the source list: "${sourceList.sourceSection.split("\n")[0]}"`,
         options: [],
         correctAnswer: answers,
+        enumerationAnswers: answers,
+        enumerationOrderMatters: false,
+        sourceSection: sourceList.sourceSection,
         estimatedAnswerTimeMinutes: 3,
-        points: 2
+        points: answers.length
       });
     } else if (qType === "matching") {
       const pairs = words.slice(0, Math.min(3, words.length)).map((word, index) => ({
@@ -547,7 +561,10 @@ RULES:
    - type (must be one of: "multiple-choice", "identification", "enumeration", "matching", "fill-blank", "true-false", "essay", "short-answer", "case-analysis", "problem-solving")
    - question (string)
    - options (array of strings, exactly 4 only for multiple-choice; ["True", "False"] only for true-false; empty for every other type)
-   - correctAnswer (string or string array for enumeration/matching)
+   - correctAnswer (string for non-enumeration questions; use an empty string for enumeration because its canonical key belongs in enumerationAnswers)
+   - enumerationAnswers (complete string array, required only for enumeration; never encode this list as a comma-separated correctAnswer string)
+   - enumerationOrderMatters (boolean for enumeration; false unless the source explicitly defines a sequence)
+   - enumerationAnswerVariations (optional array of string arrays aligned with enumerationAnswers)
    - distractors (exactly 3 strings for multiple choice). Every distractor MUST be a real term, concept, person, process, or phrase found in the Learning Document Content. It must be plausible in the same subject area but incorrect for this specific question. Never use placeholders such as "Alternative A", "Incorrect option", "None of the above", invented terminology, or unrelated generic text.
    - explanation (a teaching-focused explanation of why the answer is correct and, when useful, why alternatives are incorrect; use only source-supported information)
    - difficulty ("Easy", "Medium", "Hard")
@@ -565,7 +582,7 @@ ITEM-WRITING STANDARD:
 3. Match cognitive demand to difficulty: Easy = recall/recognition/basic understanding; Medium = application/relationships/procedures; Hard = analysis/evaluation/interpretation/decision-making/problem solving. Match every item to one of the requested Bloom levels.
 4. Multiple choice: provide exactly four distinct options and exactly one unquestionably correct answer. Never use "all of the above", "none of the above", combined answers such as "A and B", or overlapping choices. Distractors must be credible, source-grounded, in the same conceptual category, grammatically parallel, and approximately equal in length. Prefer common misconceptions, similar terminology, related processes, or comparable people/dates/formulas found in the source. Vary the correct-answer position naturally across A-D, and do not make the key conspicuous by length, specificity, or wording.
 5. Identification: describe or define a concept meaningfully and include source-supported common alternative answers in acceptableVariations.
-6. Enumeration: use only explicit source lists, state the exact number requested, and provide the complete expected answer set.
+6. Enumeration: use only explicit source lists whose boundaries are visible in the supplied text, state the exact number requested, put the complete expected answer set in enumerationAnswers, and assign one point per expected answer. Do not create an enumeration from arbitrary terms in a sentence. If the source has no suitable explicit list, omit the item.
 7. True/false: use precise, non-obvious statements and balance true and false keys across the set without a predictable pattern.
 8. Matching: all pairs must belong to one category; make pairings non-obvious and randomize the right-hand entries.
 9. Essay, case-analysis, and problem-solving: require explanation, comparison, application, analysis, evaluation, or synthesis grounded in the document. Provide a complete expected answer plus a concrete rubric with key points and score allocation. Scenarios must not require facts absent from the source.
@@ -593,6 +610,12 @@ Return JSON with an array of questions under key "questions".`;
                   question: { type: Type.STRING },
                   options: { type: Type.ARRAY, items: { type: Type.STRING } },
                   correctAnswer: { type: Type.STRING },
+                  enumerationAnswers: { type: Type.ARRAY, items: { type: Type.STRING } },
+                  enumerationOrderMatters: { type: Type.BOOLEAN },
+                  enumerationAnswerVariations: {
+                    type: Type.ARRAY,
+                    items: { type: Type.ARRAY, items: { type: Type.STRING } },
+                  },
                   distractors: { type: Type.ARRAY, items: { type: Type.STRING } },
                   explanation: { type: Type.STRING },
                   difficulty: { type: Type.STRING },
@@ -625,7 +648,17 @@ Return JSON with an array of questions under key "questions".`;
     });
 
     const parsedData = JSON.parse(response.text || '{"questions":[]}');
-    const aiQuestions = Array.isArray(parsedData.questions) ? parsedData.questions : [];
+    const seenAiEnumerationKeys = new Set<string>();
+    const aiQuestions = (Array.isArray(parsedData.questions) ? parsedData.questions : [])
+      .map((question: any) => normalizeEnumerationQuestion(question))
+      .filter((question: any) => {
+        if (question?.type !== "enumeration") return true;
+        if (!validateEnumerationQuestion(question, documentText).valid) return false;
+        const key = getEnumerationAnswers(question).map((answer) => answer.toLowerCase()).sort().join("|");
+        if (seenAiEnumerationKeys.has(key)) return false;
+        seenAiEnumerationKeys.add(key);
+        return true;
+      });
     const fallbackQuestions = generateExamFallback(documentText, { ...config, questionDistribution: requestedDistribution }).questions;
     const exactQuestions: any[] = [];
 
@@ -633,11 +666,36 @@ Return JSON with an array of questions under key "questions".`;
       const count = Number(rawCount) || 0;
       const matchingAiQuestions = aiQuestions.filter((question: any) => question?.type === type).slice(0, count);
       const missing = count - matchingAiQuestions.length;
-      const matchingFallbacks = fallbackQuestions.filter((question: any) => question.type === type).slice(0, missing);
+      const usedEnumerationKeys = new Set(
+        matchingAiQuestions
+          .filter((question: any) => question.type === "enumeration")
+          .map((question: any) => getEnumerationAnswers(question).map((answer) => answer.toLowerCase()).sort().join("|"))
+      );
+      const matchingFallbacks = fallbackQuestions
+        .filter((question: any) => question.type === type)
+        .filter((question: any) => {
+          if (type !== "enumeration") return true;
+          const key = getEnumerationAnswers(question).map((answer) => answer.toLowerCase()).sort().join("|");
+          if (usedEnumerationKeys.has(key)) return false;
+          usedEnumerationKeys.add(key);
+          return true;
+        })
+        .slice(0, missing);
       exactQuestions.push(...matchingAiQuestions, ...matchingFallbacks);
     }
 
-    res.json({ ...parsedData, questions: exactQuestions });
+    const missingByType = Object.fromEntries(
+      Object.entries(requestedDistribution)
+        .map(([type, count]) => [type, Number(count) - exactQuestions.filter((question) => question.type === type).length])
+        .filter(([, count]) => Number(count) > 0)
+    );
+    res.json({
+      ...parsedData,
+      questions: exactQuestions,
+      warnings: Object.keys(missingByType).length
+        ? [`Some requested questions could not be generated safely: ${JSON.stringify(missingByType)}. Enumeration requires an explicit source list.`]
+        : [],
+    });
   } catch (error: any) {
     console.warn("AI Generate exam error/quota limit, using fallback generator:", error.message);
     const fallback = generateExamFallback(documentText, config || {});
@@ -667,7 +725,7 @@ Write a clear, concise, grammatically correct, unambiguous item with one correct
 
 For multiple-choice questions, produce exactly four distinct, parallel, similarly sized choices with exactly one unquestionably correct answer. Every distractor must be a credible, same-category term or concept supported by the source but incorrect for this item. Never use placeholders, unrelated choices, "all of the above", "none of the above", or combined answers. Do not make the correct answer conspicuous.
 
-For enumeration, use only an explicit source list and specify the required answer count. For matching, keep all pairs in one category and randomize the right-hand entries. For essay, case-analysis, or problem-solving, include a source-grounded expected answer and a rubric containing key points and score allocation. Include a precise sourceSection and a teaching-focused explanation.
+For enumeration, use only an explicit source list, specify the required answer count, return the complete list in enumerationAnswers, and set correctAnswer to an empty string. Never encode the list as comma-separated correctAnswer text. For matching, keep all pairs in one category and randomize the right-hand entries. For essay, case-analysis, or problem-solving, include a source-grounded expected answer and a rubric containing key points and score allocation. Include a precise sourceSection and a teaching-focused explanation.
 
 Before returning the item, silently validate source support, uniqueness, grammar, difficulty, Bloom alignment, answer uniqueness, and distractor plausibility. Regenerate internally if any check fails.
 
@@ -691,6 +749,12 @@ Return a SINGLE regenerated question object matching the question JSON schema.`;
             question: { type: Type.STRING },
             options: { type: Type.ARRAY, items: { type: Type.STRING } },
             correctAnswer: { type: Type.STRING },
+            enumerationAnswers: { type: Type.ARRAY, items: { type: Type.STRING } },
+            enumerationOrderMatters: { type: Type.BOOLEAN },
+            enumerationAnswerVariations: {
+              type: Type.ARRAY,
+              items: { type: Type.ARRAY, items: { type: Type.STRING } },
+            },
             distractors: { type: Type.ARRAY, items: { type: Type.STRING } },
             explanation: { type: Type.STRING },
             difficulty: { type: Type.STRING },
@@ -717,10 +781,52 @@ Return a SINGLE regenerated question object matching the question JSON schema.`;
       },
     });
 
-    const parsedQuestion = JSON.parse(response.text || "{}");
+    const parsedQuestion = normalizeEnumerationQuestion(JSON.parse(response.text || "{}"));
+    if (parsedQuestion.type === "enumeration") {
+      const validation = validateEnumerationQuestion(parsedQuestion, documentText || "");
+      if (!validation.valid) {
+        const sourceList = findSupportingExplicitList(parsedQuestion, documentText || "")
+          || findSupportingExplicitList(currentQuestion || {}, documentText || "");
+        if (!sourceList) {
+          return res.status(422).json({ error: "No explicit source list is available for a reliable enumeration question.", details: validation.errors });
+        }
+        return res.json({
+          ...currentQuestion,
+          id: parsedQuestion.id || currentQuestion?.id,
+          type: "enumeration",
+          question: `Enumerate all ${sourceList.items.length} items in the source list: "${sourceList.sourceSection.split("\n")[0]}"`,
+          correctAnswer: sourceList.items,
+          enumerationAnswers: sourceList.items,
+          enumerationOrderMatters: false,
+          sourceSection: sourceList.sourceSection,
+          explanation: `The complete answer set is stated in the cited source list.`,
+          points: sourceList.items.length,
+        });
+      }
+    }
     res.json(parsedQuestion);
   } catch (error: any) {
-    console.warn("Error/Quota in /api/ai/regenerate-question, returning updated question:", error.message);
+    console.warn("Error/Quota in /api/ai/regenerate-question:", error.message);
+    if (currentQuestion?.type === "enumeration") {
+      const normalizedCurrent = normalizeEnumerationQuestion(currentQuestion);
+      if (validateEnumerationQuestion(normalizedCurrent, documentText || "").valid) {
+        return res.json(normalizedCurrent);
+      }
+      const sourceList = findSupportingExplicitList(currentQuestion, documentText || "");
+      if (!sourceList) {
+        return res.status(422).json({ error: "Enumeration could not be regenerated because the source contains no explicit list." });
+      }
+      return res.json({
+        ...currentQuestion,
+        question: `Enumerate all ${sourceList.items.length} items in the source list: "${sourceList.sourceSection.split("\n")[0]}"`,
+        correctAnswer: sourceList.items,
+        enumerationAnswers: sourceList.items,
+        enumerationOrderMatters: false,
+        sourceSection: sourceList.sourceSection,
+        explanation: "The complete answer set is stated in the cited source list.",
+        points: sourceList.items.length,
+      });
+    }
     res.json({
       ...currentQuestion,
       question: `${currentQuestion?.question || "Question"} (Revised)`,

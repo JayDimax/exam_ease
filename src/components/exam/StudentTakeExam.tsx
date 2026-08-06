@@ -18,6 +18,7 @@ import {
 import confetti from 'canvas-confetti';
 import { useAppStore } from '../../hooks/useAppStore';
 import { StudentSubmission, GeneratedExam } from '../../types';
+import { getEnumerationAnswers, scoreEnumerationAnswer } from '../../services/enumeration';
 
 export const StudentTakeExam: React.FC = () => {
   const { exams, activeExam, setActiveExam, addSubmission, setActiveTab, showToast } = useAppStore();
@@ -229,12 +230,15 @@ export const StudentTakeExam: React.FC = () => {
         if (studentStr === correctStr) {
           earnedPoints += q.points || 1;
         }
+      } else if (q.type === 'enumeration') {
+        earnedPoints += (q.points || getEnumerationAnswers(q).length || 1) * scoreEnumerationAnswer(q, studentAns);
       } else {
         // Auto-award 80% baseline credit for essays / short answers provided
         earnedPoints += Math.round((q.points || 1) * 0.8);
       }
     });
 
+    earnedPoints = Math.round(earnedPoints * 100) / 100;
     const percentage = Math.round((earnedPoints / totalPoints) * 100);
 
     const result: StudentSubmission = {
@@ -393,8 +397,8 @@ export const StudentTakeExam: React.FC = () => {
 
                 {q.type !== 'multiple-choice' && (
                   <textarea
-                    rows={3}
-                    placeholder="Type your answer here..."
+                    rows={q.type === 'enumeration' ? Math.max(3, getEnumerationAnswers(q).length) : 3}
+                    placeholder={q.type === 'enumeration' ? 'Enter one answer per line (commas or semicolons are also accepted).' : 'Type your answer here...'}
                     value={answers[q.id] || ''}
                     onChange={(e) => handleAnswerChange(q.id, e.target.value)}
                     className="w-full p-3 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-xs"

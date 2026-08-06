@@ -31,6 +31,11 @@ export interface Question {
   question: string;
   options?: string[];
   correctAnswer: string | string[];
+  /** Canonical answer list for enumeration questions. */
+  enumerationAnswers?: string[];
+  /** Alternative spellings/labels aligned by index with enumerationAnswers. */
+  enumerationAnswerVariations?: string[][];
+  enumerationOrderMatters?: boolean;
   distractors?: string[];
   explanation: string;
   difficulty: DifficultyLevel;
@@ -64,6 +69,7 @@ export interface ExamConfig {
   randomizeQuestions: boolean;
   randomizeChoices: boolean;
   language: string;
+  targetGradeLevel?: string;
   paperSize: 'A4' | 'Letter' | 'Legal';
   margins: 'Normal' | 'Compact' | 'Wide';
   headerText: string;

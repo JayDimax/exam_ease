@@ -7,6 +7,7 @@ import {
   ActivityLog,
   StudentSubmission,
 } from '../types';
+import { normalizeEnumerationQuestion } from './enumeration';
 
 const STORAGE_KEYS = {
   DOCUMENTS: 'ai_exam_documents',
@@ -17,6 +18,19 @@ const STORAGE_KEYS = {
   ACTIVITY: 'ai_exam_activity_logs',
   SUBMISSIONS: 'ai_exam_student_submissions',
 };
+
+function normalizeStoredExam(exam: GeneratedExam): GeneratedExam {
+  return {
+    ...exam,
+    questions: Array.isArray(exam.questions)
+      ? exam.questions.map((question) => normalizeEnumerationQuestion(question))
+      : [],
+  };
+}
+
+function normalizeStoredBankItem(item: QuestionBankItem): QuestionBankItem {
+  return { ...item, question: normalizeEnumerationQuestion(item.question) };
+}
 
 // Default Settings
 export const DEFAULT_SETTINGS: UserSettings = {
@@ -146,13 +160,14 @@ export class StorageService {
   static getExams(): GeneratedExam[] {
     try {
       const data = localStorage.getItem(STORAGE_KEYS.EXAMS);
-      return data ? JSON.parse(data) : [];
+      return data ? (JSON.parse(data) as GeneratedExam[]).map(normalizeStoredExam) : [];
     } catch {
       return [];
     }
   }
 
   static saveExam(exam: GeneratedExam): GeneratedExam[] {
+    exam = normalizeStoredExam(exam);
     const exams = this.getExams();
     const existingIdx = exams.findIndex((e) => e.id === exam.id);
     if (existingIdx >= 0) {
@@ -185,13 +200,14 @@ export class StorageService {
   static getQuestionBank(): QuestionBankItem[] {
     try {
       const data = localStorage.getItem(STORAGE_KEYS.QUESTION_BANK);
-      return data ? JSON.parse(data) : [];
+      return data ? (JSON.parse(data) as QuestionBankItem[]).map(normalizeStoredBankItem) : [];
     } catch {
       return [];
     }
   }
 
   static saveToQuestionBank(item: QuestionBankItem): QuestionBankItem[] {
+    item = normalizeStoredBankItem(item);
     const bank = this.getQuestionBank();
     if (!bank.some((b) => b.id === item.id)) {
       bank.unshift(item);
@@ -202,6 +218,7 @@ export class StorageService {
   }
 
   static bulkSaveToBank(items: QuestionBankItem[]): QuestionBankItem[] {
+    items = items.map(normalizeStoredBankItem);
     const bank = this.getQuestionBank();
     const existingIds = new Set(bank.map((b) => b.id));
     const newItems = items.filter((i) => !existingIds.has(i.id));

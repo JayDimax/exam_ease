@@ -1,5 +1,6 @@
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
 import { GeneratedExam } from '../types';
+import { getEnumerationAnswers } from './enumeration';
 
 export async function generatePdfBlob(exam: GeneratedExam, includeAnswerKey: boolean = false): Promise<Blob> {
   const pdfDoc = await PDFDocument.create();
@@ -92,6 +93,11 @@ export async function generatePdfBlob(exam: GeneratedExam, includeAnswerKey: boo
         });
         y -= 14;
       }
+    } else if (q.type === 'enumeration') {
+      for (let answerIndex = 0; answerIndex < Math.max(2, getEnumerationAnswers(q).length); answerIndex += 1) {
+        page.drawText(`   ${answerIndex + 1}. ______________________________________________`, { x: margin + 10, y, size: 9, font });
+        y -= 14;
+      }
     } else if (q.type === 'essay' || q.type === 'case-analysis' || q.type === 'problem-solving') {
       y -= 30; // Leave space for writing
     }
@@ -121,8 +127,9 @@ export async function generatePdfBlob(exam: GeneratedExam, includeAnswerKey: boo
         y = height - 50;
       }
 
+      const enumerationAnswers = q.type === 'enumeration' ? getEnumerationAnswers(q) : [];
       const ansStr = Array.isArray(q.correctAnswer) ? q.correctAnswer.join(', ') : q.correctAnswer;
-      page.drawText(`${keyNum}. Answer: ${ansStr}`, {
+      page.drawText(`${keyNum}. Answer${enumerationAnswers.length ? ` (${enumerationAnswers.length} items)` : ''}:`, {
         x: margin,
         y,
         size: 10,
@@ -130,6 +137,20 @@ export async function generatePdfBlob(exam: GeneratedExam, includeAnswerKey: boo
         color: rgb(0, 0.3, 0.7),
       });
       y -= 14;
+
+      if (enumerationAnswers.length) {
+        for (let answerIndex = 0; answerIndex < enumerationAnswers.length; answerIndex += 1) {
+          if (y < 60) {
+            page = pdfDoc.addPage([595.28, 841.89]);
+            y = height - 50;
+          }
+          page.drawText(`   ${answerIndex + 1}. ${truncateText(enumerationAnswers[answerIndex], 85)}`, { x: margin + 10, y, size: 9, font: boldFont });
+          y -= 13;
+        }
+      } else {
+        page.drawText(`   ${truncateText(String(ansStr || ''), 90)}`, { x: margin + 10, y, size: 9, font: boldFont });
+        y -= 13;
+      }
 
       if (q.explanation) {
         page.drawText(`   Explanation: ${truncateText(q.explanation, 90)}`, {
@@ -216,6 +237,11 @@ export function triggerPrintWindow(exam: GeneratedExam, includeAnswerKey: boolea
                   ${q.options.map((opt, oIdx) => `<div><strong>${String.fromCharCode(65 + oIdx)}.</strong> ${opt}</div>`).join('')}
                 </div>
               ` : ''}
+              ${q.type === 'enumeration' ? `
+                <div style="margin-left:20px; line-height:2;">
+                  ${Array.from({ length: Math.max(2, getEnumerationAnswers(q).length) }, (_, answerIndex) => `<div>${answerIndex + 1}. ______________________________________________</div>`).join('')}
+                </div>
+              ` : ''}
               ${q.type === 'essay' || q.type === 'case-analysis' || q.type === 'problem-solving' ? `
                 <div class="writing-area"></div>
               ` : ''}
@@ -232,7 +258,10 @@ export function triggerPrintWindow(exam: GeneratedExam, includeAnswerKey: boolea
             ${exam.questions.map((q, idx) => `
               <div style="margin-bottom: 12px;">
                 <div><strong>Q${idx + 1}:</strong> ${q.question}</div>
-                <div class="correct-ans">Correct Answer: ${Array.isArray(q.correctAnswer) ? q.correctAnswer.join(', ') : q.correctAnswer}</div>
+                <div class="correct-ans">Correct Answer${q.type === 'enumeration' ? ` (${getEnumerationAnswers(q).length} items)` : ''}:</div>
+                ${q.type === 'enumeration'
+                  ? `<ol>${getEnumerationAnswers(q).map((answer) => `<li>${answer}</li>`).join('')}</ol>`
+                  : `<div class="correct-ans">${Array.isArray(q.correctAnswer) ? q.correctAnswer.join(', ') : q.correctAnswer}</div>`}
                 <div style="color: #555; font-size: 12px;">Explanation: ${q.explanation || 'N/A'}</div>
               </div>
             `).join('')}

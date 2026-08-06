@@ -285,6 +285,15 @@ export const ExamGeneratorView: React.FC = () => {
       // extra modalities, and fill any missing type before saving the exam.
       questions = enforceQuestionDistribution(questions, config, activeDocument.extractedText);
 
+      const generatedCounts: Record<string, number> = {};
+      for (const question of questions as GeneratedExam['questions']) {
+        generatedCounts[question.type] = (generatedCounts[question.type] || 0) + 1;
+      }
+      const missing = (Object.entries(config.questionDistribution) as [QuestionType, number][])
+        .filter(([, count]) => count > 0)
+        .filter(([type, count]) => (generatedCounts[type] || 0) < count)
+        .map(([type, count]) => `${type}: ${generatedCounts[type] || 0}/${count}`);
+
       const newExam: GeneratedExam = {
         id: 'exam_' + Date.now(),
         documentId: activeDocument.id,
@@ -297,7 +306,12 @@ export const ExamGeneratorView: React.FC = () => {
 
       saveExam(newExam);
       setActiveExam(newExam);
-      showToast(`Successfully generated examination with ${newExam.questions.length} questions!`);
+      showToast(
+        missing.length
+          ? `Generated ${newExam.questions.length} reliable questions. Skipped unsupported items (${missing.join(', ')}).`
+          : `Successfully generated examination with ${newExam.questions.length} questions!`,
+        missing.length ? 'info' : 'success',
+      );
       setActiveTab('preview');
     } catch (err: any) {
       console.error(err);

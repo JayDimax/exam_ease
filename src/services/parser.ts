@@ -65,8 +65,10 @@ async function readPdfFile(file: File): Promise<string> {
     const page = await pdf.getPage(i);
     const content = await page.getTextContent();
     const pageText = content.items
-      .map((item: any) => item.str)
-      .join(' ');
+      .map((item: any) => `${item.str || ''}${item.hasEOL ? '\n' : ' '}`)
+      .join('')
+      .replace(/[ \t]+\n/g, '\n')
+      .trim();
     fullText += `\n--- Page ${i} ---\n` + pageText;
   }
 
@@ -111,8 +113,25 @@ async function readPptxFile(file: File): Promise<string> {
 
   for (const slidePath of slideFiles) {
     const content = await zip.files[slidePath].async('string');
-    // Strip XML tags
-    const textOnly = content.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+    // Preserve paragraph and line boundaries so numbered/bulleted source lists
+    // remain detectable for reliable enumeration generation.
+    const textOnly = content
+      .replace(/<a:p\b[^>]*>[\s\S]*?<\/a:p>/g, (paragraph) => {
+        const prefix = /<a:(?:buChar|buAutoNum)\b/.test(paragraph) ? '- ' : '';
+        const paragraphText = [...paragraph.matchAll(/<a:t>([\s\S]*?)<\/a:t>/g)]
+          .map((match) => match[1])
+          .join(' ');
+        return `${prefix}${paragraphText}\n`;
+      })
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/&apos;/g, "'")
+      .replace(/[ \t]+/g, ' ')
+      .replace(/\n\s+/g, '\n')
+      .trim();
     slidesText += `\n--- Slide ${slideNum++} ---\n` + textOnly.trim();
   }
 

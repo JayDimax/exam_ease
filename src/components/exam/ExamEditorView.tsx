@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { useAppStore } from '../../hooks/useAppStore';
 import { Question, QuestionType, DifficultyLevel, BloomLevel } from '../../types';
+import { getEnumerationAnswers, normalizeEnumerationQuestion, validateEnumerationQuestion } from '../../services/enumeration';
 
 export const ExamEditorView: React.FC = () => {
   const {
@@ -44,6 +45,16 @@ export const ExamEditorView: React.FC = () => {
   }
 
   const handleSaveAll = () => {
+    const sourceFor = (question: Question) =>
+      activeDocument?.id === activeExam.documentId ? activeDocument.extractedText : question.sourceSection || '';
+    const invalidEnumeration = questions.find((question) =>
+      question.type === 'enumeration' && !validateEnumerationQuestion(question, sourceFor(question)).valid,
+    );
+    if (invalidEnumeration) {
+      const details = validateEnumerationQuestion(invalidEnumeration, sourceFor(invalidEnumeration)).errors.join(' ');
+      showToast(`Cannot save enumeration "${invalidEnumeration.question}": ${details}`, 'error');
+      return;
+    }
     updateExamQuestions(activeExam.id, questions);
     showToast('Saved all question edits.');
     setActiveTab('preview');
@@ -107,12 +118,21 @@ export const ExamEditorView: React.FC = () => {
       const responseText = await response.text();
       let regenerated: Question | null = null;
       try {
-        regenerated = JSON.parse(responseText);
+        const parsed = JSON.parse(responseText);
+        if (!response.ok) {
+          showToast(parsed?.error || 'Question regeneration failed.', 'error');
+          return;
+        }
+        regenerated = normalizeEnumerationQuestion(parsed) as Question;
       } catch {
         console.warn('Server returned non-JSON response on regenerate-question:', responseText.slice(0, 100));
       }
 
       if (!regenerated || !regenerated.question) {
+        if (q.type === 'enumeration') {
+          showToast('Enumeration was not changed because no validated source list was returned.', 'error');
+          return;
+        }
         regenerated = {
           ...q,
           question: `${q.question} (Refined)`,
@@ -127,19 +147,7 @@ export const ExamEditorView: React.FC = () => {
       setAiFeedback('');
     } catch (err: any) {
       console.error(err);
-      setQuestions((prev) =>
-        prev.map((item) =>
-          item.id === q.id
-            ? {
-                ...q,
-                question: `${q.question} (Refined)`,
-                explanation: `${q.explanation || ''} [Updated based on review]`,
-              }
-            : item
-        )
-      );
-      showToast('Question regenerated successfully!');
-      setAiFeedback('');
+      showToast(err?.message || 'Question regeneration failed.', 'error');
     } finally {
       setRegeneratingId(null);
     }
@@ -149,6 +157,23 @@ export const ExamEditorView: React.FC = () => {
     setQuestions((prev) =>
       prev.map((q) => (q.id === id ? { ...q, [field]: value } : q))
     );
+  };
+
+  const handleEnumerationAnswersChange = (id: string, answers: string[]) => {
+    setQuestions((prev) => prev.map((question) => {
+      if (question.id !== id) return question;
+      const questionText = question.question.replace(
+        /(\b(?:enumerate|list|name|identify)\s+(?:(?:all|the)\s+)?)(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)\b/i,
+        `$1${answers.length}`,
+      );
+      return {
+        ...question,
+        question: questionText,
+        correctAnswer: answers,
+        enumerationAnswers: answers,
+        points: Math.max(1, answers.length),
+      };
+    }));
   };
 
   return (
@@ -276,6 +301,63 @@ export const ExamEditorView: React.FC = () => {
                   )}
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {q.type === 'enumeration' ? (
+                    <div className="sm:col-span-2 space-y-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <label className="block text-[11px] font-bold text-slate-500">Expected Answers ({getEnumerationAnswers(q).length})</label>
+                        <button
+                          type="button"
+                          onClick={() => handleEnumerationAnswersChange(q.id, [...getEnumerationAnswers(q), 'New answer'])}
+                          className="text-[11px] font-bold text-blue-600 hover:text-blue-700"
+                        >
+                          + Add answer
+                        </button>
+                      </div>
+                      {getEnumerationAnswers(q).map((answer, answerIndex) => (
+                        <div key={answerIndex} className="grid grid-cols-[1fr_1fr_auto] gap-2">
+                          <input
+                            type="text"
+                            aria-label={`Expected answer ${answerIndex + 1}`}
+                            value={answer}
+                            onChange={(e) => {
+                              const answers = [...getEnumerationAnswers(q)];
+                              answers[answerIndex] = e.target.value;
+                              handleEnumerationAnswersChange(q.id, answers);
+                            }}
+                            className="p-2 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-xs font-bold text-emerald-600"
+                          />
+                          <input
+                            type="text"
+                            aria-label={`Accepted variations for answer ${answerIndex + 1}`}
+                            placeholder="Aliases, separated by semicolons"
+                            value={(q.enumerationAnswerVariations?.[answerIndex] || []).join('; ')}
+                            onChange={(e) => {
+                              const variations = [...(q.enumerationAnswerVariations || [])];
+                              variations[answerIndex] = e.target.value.split(';').map((value) => value.trim()).filter(Boolean);
+                              handleUpdateQuestionField(q.id, 'enumerationAnswerVariations', variations);
+                            }}
+                            className="p-2 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-xs"
+                          />
+                          <button
+                            type="button"
+                            aria-label={`Remove expected answer ${answerIndex + 1}`}
+                            onClick={() => handleEnumerationAnswersChange(q.id, getEnumerationAnswers(q).filter((_, index) => index !== answerIndex))}
+                            className="p-2 text-slate-400 hover:text-red-600"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      ))}
+                      <label className="flex items-center gap-2 text-[11px] font-medium text-slate-600 dark:text-slate-300">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(q.enumerationOrderMatters)}
+                          onChange={(e) => handleUpdateQuestionField(q.id, 'enumerationOrderMatters', e.target.checked)}
+                        />
+                        Require answers in source order
+                      </label>
+                    </div>
+                    ) : (
                     <div>
                       <label className="block text-[11px] font-bold text-slate-500 mb-1">Correct Answer</label>
                       <input
@@ -285,6 +367,7 @@ export const ExamEditorView: React.FC = () => {
                         className="w-full p-2 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-xs font-bold text-emerald-600"
                       />
                     </div>
+                    )}
 
                     <div>
                       <label className="block text-[11px] font-bold text-slate-500 mb-1">Points</label>

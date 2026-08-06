@@ -1,4 +1,10 @@
 import { ExamConfig, Question, QuestionType } from '../types';
+import {
+  extractExplicitLists,
+  getEnumerationAnswers,
+  normalizeEnumerationQuestion,
+  validateEnumerationQuestion,
+} from './enumeration';
 
 const DEFAULT_POINTS: Record<QuestionType, number> = {
   'multiple-choice': 1,
@@ -66,7 +72,7 @@ function groundMultipleChoice(question: Question, text: string): Question {
   };
 }
 
-function makeFallback(type: QuestionType, index: number, text: string, config: ExamConfig): Question {
+function makeFallback(type: QuestionType, index: number, text: string, config: ExamConfig): Question | null {
   const sentences = sourceParts(text);
   const sentence = sentences[index % sentences.length];
   const words = sentence.split(/\s+/).map((word) => word.replace(/[^a-zA-Z0-9-]/g, '')).filter((word) => word.length > 4);
@@ -93,7 +99,18 @@ function makeFallback(type: QuestionType, index: number, text: string, config: E
     case 'identification':
       return { ...base, question: `Identify the missing term: "${sentence.replace(answer, '_____')}"`, correctAnswer: answer, acceptableVariations: [answer] };
     case 'enumeration':
-      return { ...base, question: `Enumerate ${listAnswers.length} key terms from this source statement: "${sentence}"`, correctAnswer: listAnswers };
+      {
+        const sourceList = extractExplicitLists(text)[index];
+        if (!sourceList) return null;
+        return {
+          ...base,
+          question: `Enumerate all ${sourceList.items.length} items in the source list: "${sourceList.sourceSection.split('\n')[0]}"`,
+          correctAnswer: sourceList.items,
+          enumerationAnswers: sourceList.items,
+          enumerationOrderMatters: false,
+          sourceSection: sourceList.sourceSection,
+        };
+      }
     case 'fill-blank':
       return { ...base, question: `Fill in the blank: ${sentence.replace(answer, '_____')}`, correctAnswer: answer, acceptableVariations: [answer] };
     case 'matching': {
@@ -116,23 +133,51 @@ export function enforceQuestionDistribution(
   config: ExamConfig,
   documentText: string,
 ): Question[] {
+  const seenEnumerationKeys = new Set<string>();
   const normalized = generated
     .map((question: any) => {
       const type = normalizeType(question?.type);
-      return type ? { ...question, type, points: Number(question.points) || DEFAULT_POINTS[type] } : null;
+      if (!type) return null;
+      const normalizedQuestion = normalizeEnumerationQuestion({
+        ...question,
+        type,
+        points: Number(question.points) || DEFAULT_POINTS[type],
+      }) as Question;
+      if (type === 'enumeration' && !validateEnumerationQuestion(normalizedQuestion, documentText).valid) return null;
+      return normalizedQuestion;
     })
-    .filter((question): question is Question => Boolean(question));
+    .filter((question): question is Question => Boolean(question))
+    .filter((question) => {
+      if (question.type !== 'enumeration') return true;
+      const key = getEnumerationAnswers(question).map((answer) => answer.toLowerCase()).sort().join('|');
+      if (seenEnumerationKeys.has(key)) return false;
+      seenEnumerationKeys.add(key);
+      return true;
+    });
 
   const result: Question[] = [];
-  let fallbackIndex = 0;
+  const fallbackIndexes: Partial<Record<QuestionType, number>> = {};
 
   for (const [type, rawCount] of Object.entries(config.questionDistribution) as [QuestionType, number][]) {
     const count = Math.max(0, Number(rawCount) || 0);
     const matching = normalized.filter((question) => question.type === type).slice(0, count);
+    fallbackIndexes[type] = type === 'enumeration' ? 0 : matching.length;
+    const usedEnumerationKeys = new Set(
+      matching.map((question) => getEnumerationAnswers(question).map((answer) => answer.toLowerCase()).sort().join('|')),
+    );
     result.push(...matching);
     while (matching.length < count) {
-      matching.push(makeFallback(type, fallbackIndex++, documentText, config));
-      result.push(matching[matching.length - 1]);
+      const fallbackIndex = fallbackIndexes[type] || 0;
+      fallbackIndexes[type] = fallbackIndex + 1;
+      const fallback = makeFallback(type, fallbackIndex, documentText, config);
+      if (!fallback) break;
+      if (type === 'enumeration') {
+        const key = getEnumerationAnswers(fallback).map((answer) => answer.toLowerCase()).sort().join('|');
+        if (usedEnumerationKeys.has(key)) continue;
+        usedEnumerationKeys.add(key);
+      }
+      matching.push(fallback);
+      result.push(fallback);
     }
   }
 

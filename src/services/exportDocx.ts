@@ -12,6 +12,7 @@ import {
   WidthType,
 } from 'docx';
 import { GeneratedExam, Question } from '../types';
+import { getEnumerationAnswers } from './enumeration';
 
 export async function generateDocxBlob(exam: GeneratedExam, includeAnswerKey: boolean = false): Promise<Blob> {
   const { config, questions } = exam;
@@ -164,15 +165,28 @@ export async function generateDocxBlob(exam: GeneratedExam, includeAnswerKey: bo
 
     let keyCounter = 1;
     for (const q of questions) {
+      const enumerationAnswers = q.type === 'enumeration' ? getEnumerationAnswers(q) : [];
       const answerStr = Array.isArray(q.correctAnswer) ? q.correctAnswer.join(', ') : q.correctAnswer;
       docChildren.push(
         new Paragraph({
           children: [
             new TextRun({ text: `${keyCounter}. `, bold: true, size: 20 }),
-            new TextRun({ text: `Correct Answer: ${answerStr}`, bold: true, color: '0066CC', size: 20 }),
+            new TextRun({
+              text: enumerationAnswers.length ? `Correct Answer (${enumerationAnswers.length} items):` : `Correct Answer: ${answerStr}`,
+              bold: true,
+              color: '0066CC',
+              size: 20,
+            }),
           ],
           spacing: { before: 100 },
-        }),
+        })
+      );
+      if (enumerationAnswers.length) {
+        enumerationAnswers.forEach((answer, answerIndex) => docChildren.push(
+          new Paragraph({ text: `${answerIndex + 1}. ${answer}`, indent: { left: 360 }, spacing: { after: 30 } }),
+        ));
+      }
+      docChildren.push(
         new Paragraph({
           children: [
             new TextRun({ text: `   Explanation: `, italics: true, size: 18 }),
@@ -266,6 +280,13 @@ function formatQuestionForDocx(q: Question, index: number): Paragraph[] {
         })
       );
     });
+  } else if (q.type === 'enumeration') {
+    for (let i = 0; i < Math.max(2, getEnumerationAnswers(q).length); i += 1) {
+      paragraphs.push(new Paragraph({
+        children: [new TextRun({ text: `   ${i + 1}. ___________________________________________________________________________`, color: '999999', size: 18 })],
+        spacing: { after: 30 },
+      }));
+    }
   } else if (q.type === 'essay' || q.type === 'case-analysis' || q.type === 'problem-solving') {
     // Blank lines for student response
     for (let i = 0; i < 4; i++) {

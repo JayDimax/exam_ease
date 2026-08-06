@@ -22,6 +22,7 @@ import { useAppStore } from '../../hooks/useAppStore';
 import { triggerPrintWindow } from '../../services/exportPdf';
 import { generateDocxBlob } from '../../services/exportDocx';
 import { QualityAnalysis } from '../../types';
+import { getEnumerationAnswers } from '../../services/enumeration';
 
 export const ExamPreviewView: React.FC = () => {
   const {
@@ -427,7 +428,11 @@ const QuestionCard: React.FC<QuestionCardProps> = ({ question, index, isTeacher 
 
       {!isTeacher && ['enumeration', 'essay', 'case-analysis', 'problem-solving'].includes(question.type) && (
         <div className="ml-6 space-y-5 pt-2">
-          {[1, 2, 3].map((line) => <div key={line} className="border-b border-slate-300 dark:border-slate-600" />)}
+          {Array.from({
+            length: question.type === 'enumeration'
+              ? Math.max(2, getEnumerationAnswers(question).length)
+              : 3,
+          }, (_, line) => <div key={line} className="border-b border-slate-300 dark:border-slate-600" />)}
         </div>
       )}
 
@@ -441,11 +446,17 @@ const QuestionCard: React.FC<QuestionCardProps> = ({ question, index, isTeacher 
       {/* Answer Key & Teacher Details */}
       {isTeacher && (
         <div className="mt-3 pt-3 border-t border-slate-200 dark:border-slate-600/60 space-y-2 text-xs">
-          <div className="flex items-center gap-2">
+          <div className="flex items-start gap-2">
             <span className="font-bold text-emerald-600 dark:text-emerald-400">Correct Answer:</span>
-            <span className="font-extrabold text-slate-900 dark:text-white">
-              {Array.isArray(question.correctAnswer) ? question.correctAnswer.join(', ') : question.correctAnswer}
-            </span>
+            {question.type === 'enumeration' ? (
+              <ol className="list-decimal list-inside font-extrabold text-slate-900 dark:text-white">
+                {getEnumerationAnswers(question).map((answer, answerIndex) => <li key={answerIndex}>{answer}</li>)}
+              </ol>
+            ) : (
+              <span className="font-extrabold text-slate-900 dark:text-white">
+                {Array.isArray(question.correctAnswer) ? question.correctAnswer.join(', ') : question.correctAnswer}
+              </span>
+            )}
           </div>
 
           {question.explanation && (
