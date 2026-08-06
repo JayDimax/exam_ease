@@ -15,6 +15,7 @@ import {
 import { useAppStore } from '../../hooks/useAppStore';
 import { Question, QuestionType, DifficultyLevel, BloomLevel } from '../../types';
 import { getEnumerationAnswers, normalizeEnumerationQuestion, validateEnumerationQuestion } from '../../services/enumeration';
+import { normalizeTrueFalseQuestion, validateTrueFalseQuestion } from '../../services/trueFalse';
 
 export const ExamEditorView: React.FC = () => {
   const {
@@ -53,6 +54,14 @@ export const ExamEditorView: React.FC = () => {
     if (invalidEnumeration) {
       const details = validateEnumerationQuestion(invalidEnumeration, sourceFor(invalidEnumeration)).errors.join(' ');
       showToast(`Cannot save enumeration "${invalidEnumeration.question}": ${details}`, 'error');
+      return;
+    }
+    const invalidTrueFalse = questions.find((question) =>
+      question.type === 'true-false' && !validateTrueFalseQuestion(question, sourceFor(question)).valid,
+    );
+    if (invalidTrueFalse) {
+      const details = validateTrueFalseQuestion(invalidTrueFalse, sourceFor(invalidTrueFalse)).errors.join(' ');
+      showToast(`Cannot save True/False item "${invalidTrueFalse.question}": ${details}`, 'error');
       return;
     }
     updateExamQuestions(activeExam.id, questions);
@@ -123,14 +132,14 @@ export const ExamEditorView: React.FC = () => {
           showToast(parsed?.error || 'Question regeneration failed.', 'error');
           return;
         }
-        regenerated = normalizeEnumerationQuestion(parsed) as Question;
+        regenerated = normalizeTrueFalseQuestion(normalizeEnumerationQuestion(parsed)) as Question;
       } catch {
         console.warn('Server returned non-JSON response on regenerate-question:', responseText.slice(0, 100));
       }
 
       if (!regenerated || !regenerated.question) {
-        if (q.type === 'enumeration') {
-          showToast('Enumeration was not changed because no validated source list was returned.', 'error');
+        if (q.type === 'enumeration' || q.type === 'true-false') {
+          showToast(`${q.type === 'enumeration' ? 'Enumeration' : 'True/False item'} was not changed because no validated replacement was returned.`, 'error');
           return;
         }
         regenerated = {

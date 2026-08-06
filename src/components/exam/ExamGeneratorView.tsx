@@ -199,7 +199,7 @@ export const ExamGeneratorView: React.FC = () => {
           .map((s) => s.trim())
           .filter((s) => s.length > 20);
         const total = Math.min(config.totalQuestions || 10, Math.max(5, sentences.length));
-        const types = ['multiple-choice', 'identification', 'true-false', 'fill-blank', 'essay'];
+        const types = ['multiple-choice', 'identification', 'fill-blank', 'essay'];
 
         questions = [];
         for (let i = 0; i < total; i++) {

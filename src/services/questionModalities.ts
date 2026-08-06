@@ -5,6 +5,7 @@ import {
   normalizeEnumerationQuestion,
   validateEnumerationQuestion,
 } from './enumeration';
+import { normalizeTrueFalseQuestion, validateTrueFalseQuestion } from './trueFalse';
 
 const DEFAULT_POINTS: Record<QuestionType, number> = {
   'multiple-choice': 1,
@@ -95,7 +96,9 @@ function makeFallback(type: QuestionType, index: number, text: string, config: E
       return { ...base, question: `Which term completes this source statement: "${sentence.replace(answer, '_____')}"?`, options: [answer, ...distractors], distractors, correctAnswer: answer };
     }
     case 'true-false':
-      return { ...base, question: `True or False: ${sentence}`, options: ['True', 'False'], correctAnswer: 'True' };
+      // A mechanical sentence copy does not meet the conceptual item-writing
+      // standard. Only validated AI-written True/False items are retained.
+      return null;
     case 'identification':
       return { ...base, question: `Identify the missing term: "${sentence.replace(answer, '_____')}"`, correctAnswer: answer, acceptableVariations: [answer] };
     case 'enumeration':
@@ -138,12 +141,13 @@ export function enforceQuestionDistribution(
     .map((question: any) => {
       const type = normalizeType(question?.type);
       if (!type) return null;
-      const normalizedQuestion = normalizeEnumerationQuestion({
+      const normalizedQuestion = normalizeTrueFalseQuestion(normalizeEnumerationQuestion({
         ...question,
         type,
         points: Number(question.points) || DEFAULT_POINTS[type],
-      }) as Question;
+      })) as Question;
       if (type === 'enumeration' && !validateEnumerationQuestion(normalizedQuestion, documentText).valid) return null;
+      if (type === 'true-false' && !validateTrueFalseQuestion(normalizedQuestion, documentText).valid) return null;
       return normalizedQuestion;
     })
     .filter((question): question is Question => Boolean(question))

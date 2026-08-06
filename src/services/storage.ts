@@ -8,6 +8,7 @@ import {
   StudentSubmission,
 } from '../types';
 import { normalizeEnumerationQuestion } from './enumeration';
+import { normalizeTrueFalseQuestion } from './trueFalse';
 
 const STORAGE_KEYS = {
   DOCUMENTS: 'ai_exam_documents',
@@ -23,13 +24,13 @@ function normalizeStoredExam(exam: GeneratedExam): GeneratedExam {
   return {
     ...exam,
     questions: Array.isArray(exam.questions)
-      ? exam.questions.map((question) => normalizeEnumerationQuestion(question))
+      ? exam.questions.map((question) => normalizeTrueFalseQuestion(normalizeEnumerationQuestion(question)))
       : [],
   };
 }
 
 function normalizeStoredBankItem(item: QuestionBankItem): QuestionBankItem {
-  return { ...item, question: normalizeEnumerationQuestion(item.question) };
+  return { ...item, question: normalizeTrueFalseQuestion(normalizeEnumerationQuestion(item.question)) };
 }
 
 // Default Settings

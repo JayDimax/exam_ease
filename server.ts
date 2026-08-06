@@ -10,6 +10,7 @@ import {
   normalizeEnumerationQuestion,
   validateEnumerationQuestion,
 } from "./src/services/enumeration";
+import { normalizeTrueFalseQuestion, validateTrueFalseQuestion } from "./src/services/trueFalse";
 
 dotenv.config();
 
@@ -302,20 +303,9 @@ function generateExamFallback(text: string, config: any) {
         points: 1
       });
     } else if (qType === "true-false") {
-      questions.push({
-        ...base,
-        question: `True or False: ${sentence}`,
-        options: ["True", "False"],
-        correctAnswer: "True",
-        distractors: ["False"],
-        explanation: `Direct quote from source document: "${sentence}"`,
-        difficulty: "Easy",
-        bloomLevel: "Understand",
-        sourceSection: sentence,
-        estimatedAnswerTimeMinutes: 1,
-        confidenceScore: 95,
-        points: 1
-      });
+      // Do not degrade to copied source sentences with an automatic True key.
+      // If AI cannot produce a validated conceptual item, omit it and warn.
+      continue;
     } else if (qType === "identification") {
       questions.push({
         ...base,
@@ -583,7 +573,7 @@ ITEM-WRITING STANDARD:
 4. Multiple choice: provide exactly four distinct options and exactly one unquestionably correct answer. Never use "all of the above", "none of the above", combined answers such as "A and B", or overlapping choices. Distractors must be credible, source-grounded, in the same conceptual category, grammatically parallel, and approximately equal in length. Prefer common misconceptions, similar terminology, related processes, or comparable people/dates/formulas found in the source. Vary the correct-answer position naturally across A-D, and do not make the key conspicuous by length, specificity, or wording.
 5. Identification: describe or define a concept meaningfully and include source-supported common alternative answers in acceptableVariations.
 6. Enumeration: use only explicit source lists whose boundaries are visible in the supplied text, state the exact number requested, put the complete expected answer set in enumerationAnswers, and assign one point per expected answer. Do not create an enumeration from arbitrary terms in a sentence. If the source has no suitable explicit list, omit the item.
-7. True/false: use precise, non-obvious statements and balance true and false keys across the set without a predictable pattern.
+7. True/false: test understanding of a concept, not recognition of document structure. Read the concept and rewrite it as a complete educational proposition in your own wording. Never copy a document sentence or bullet directly, never ask whether a heading exists, and never begin with a heading or label such as "Suggested Activities", "Learning Objective", "Chapter", "Unit", "Module", or "Lesson". Return only the statement itself without a "True or False:" prefix. For a false item, change exactly one important fact while keeping the rest accurate and believable, then identify that single correction in the explanation. Balance True and False keys across the set without a predictable pattern.
 8. Matching: all pairs must belong to one category; make pairings non-obvious and randomize the right-hand entries.
 9. Essay, case-analysis, and problem-solving: require explanation, comparison, application, analysis, evaluation, or synthesis grounded in the document. Provide a complete expected answer plus a concrete rubric with key points and score allocation. Scenarios must not require facts absent from the source.
 10. Internally validate every item before returning it: source support; one correct interpretation; credible same-category distractors; no duplicate or near-duplicate items or choices; correct grammar; appropriate difficulty and Bloom level; broad coverage; and no answer clues. Silently replace any item that fails.
@@ -649,16 +639,24 @@ Return JSON with an array of questions under key "questions".`;
 
     const parsedData = JSON.parse(response.text || '{"questions":[]}');
     const seenAiEnumerationKeys = new Set<string>();
-    const aiQuestions = (Array.isArray(parsedData.questions) ? parsedData.questions : [])
-      .map((question: any) => normalizeEnumerationQuestion(question))
+    let aiQuestions = (Array.isArray(parsedData.questions) ? parsedData.questions : [])
+      .map((question: any) => normalizeTrueFalseQuestion(normalizeEnumerationQuestion(question)))
       .filter((question: any) => {
-        if (question?.type !== "enumeration") return true;
-        if (!validateEnumerationQuestion(question, documentText).valid) return false;
-        const key = getEnumerationAnswers(question).map((answer) => answer.toLowerCase()).sort().join("|");
-        if (seenAiEnumerationKeys.has(key)) return false;
-        seenAiEnumerationKeys.add(key);
+        if (question?.type === "true-false" && !validateTrueFalseQuestion(question, documentText).valid) return false;
+        if (question?.type === "enumeration") {
+          if (!validateEnumerationQuestion(question, documentText).valid) return false;
+          const key = getEnumerationAnswers(question).map((answer) => answer.toLowerCase()).sort().join("|");
+          if (seenAiEnumerationKeys.has(key)) return false;
+          seenAiEnumerationKeys.add(key);
+        }
         return true;
       });
+    const requestedTrueFalseCount = Number(requestedDistribution["true-false"] || 0);
+    const trueFalseQuestions = aiQuestions.filter((question: any) => question.type === "true-false");
+    if (requestedTrueFalseCount > 1 && trueFalseQuestions.length > 1) {
+      const keys = new Set(trueFalseQuestions.map((question: any) => question.correctAnswer));
+      if (keys.size < 2) aiQuestions = aiQuestions.filter((question: any) => question.type !== "true-false");
+    }
     const fallbackQuestions = generateExamFallback(documentText, { ...config, questionDistribution: requestedDistribution }).questions;
     const exactQuestions: any[] = [];
 
@@ -693,7 +691,7 @@ Return JSON with an array of questions under key "questions".`;
       ...parsedData,
       questions: exactQuestions,
       warnings: Object.keys(missingByType).length
-        ? [`Some requested questions could not be generated safely: ${JSON.stringify(missingByType)}. Enumeration requires an explicit source list.`]
+        ? [`Some requested questions could not be generated safely: ${JSON.stringify(missingByType)}. Unsupported items were omitted instead of using low-quality fallbacks.`]
         : [],
     });
   } catch (error: any) {
@@ -726,6 +724,8 @@ Write a clear, concise, grammatically correct, unambiguous item with one correct
 For multiple-choice questions, produce exactly four distinct, parallel, similarly sized choices with exactly one unquestionably correct answer. Every distractor must be a credible, same-category term or concept supported by the source but incorrect for this item. Never use placeholders, unrelated choices, "all of the above", "none of the above", or combined answers. Do not make the correct answer conspicuous.
 
 For enumeration, use only an explicit source list, specify the required answer count, return the complete list in enumerationAnswers, and set correctAnswer to an empty string. Never encode the list as comma-separated correctAnswer text. For matching, keep all pairs in one category and randomize the right-hand entries. For essay, case-analysis, or problem-solving, include a source-grounded expected answer and a rubric containing key points and score allocation. Include a precise sourceSection and a teaching-focused explanation.
+
+For True/False, rewrite the underlying concept as a complete educational statement. Do not copy a source sentence or bullet, ask whether a heading exists, use document labels such as Suggested Activities/Learning Objective/Chapter/Unit/Module/Lesson, or include a "True or False:" prefix. If the key is False, alter exactly one important fact, keep the statement believable, and explain the single correction.
 
 Before returning the item, silently validate source support, uniqueness, grammar, difficulty, Bloom alignment, answer uniqueness, and distractor plausibility. Regenerate internally if any check fails.
 
@@ -781,7 +781,13 @@ Return a SINGLE regenerated question object matching the question JSON schema.`;
       },
     });
 
-    const parsedQuestion = normalizeEnumerationQuestion(JSON.parse(response.text || "{}"));
+    const parsedQuestion = normalizeTrueFalseQuestion(normalizeEnumerationQuestion(JSON.parse(response.text || "{}")));
+    if (parsedQuestion.type === "true-false") {
+      const validation = validateTrueFalseQuestion(parsedQuestion, documentText || "");
+      if (!validation.valid) {
+        return res.status(422).json({ error: "The regenerated True/False item did not meet the conceptual quality standard.", details: validation.errors });
+      }
+    }
     if (parsedQuestion.type === "enumeration") {
       const validation = validateEnumerationQuestion(parsedQuestion, documentText || "");
       if (!validation.valid) {
@@ -807,6 +813,13 @@ Return a SINGLE regenerated question object matching the question JSON schema.`;
     res.json(parsedQuestion);
   } catch (error: any) {
     console.warn("Error/Quota in /api/ai/regenerate-question:", error.message);
+    if (currentQuestion?.type === "true-false") {
+      const normalizedCurrent = normalizeTrueFalseQuestion(currentQuestion);
+      if (validateTrueFalseQuestion(normalizedCurrent, documentText || "").valid) {
+        return res.json(normalizedCurrent);
+      }
+      return res.status(422).json({ error: "True/False regeneration failed and the existing item does not meet the quality standard." });
+    }
     if (currentQuestion?.type === "enumeration") {
       const normalizedCurrent = normalizeEnumerationQuestion(currentQuestion);
       if (validateEnumerationQuestion(normalizedCurrent, documentText || "").valid) {
